@@ -1,0 +1,54 @@
+name: Build APK
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: تثبيت Rust مع هدف أندرويد
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: تثبيت cargo-apk2
+        run: cargo install cargo-apk2
+
+      - name: تثبيت Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 31
+
+      - name: تثبيت Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26b
+
+      - name: تثبيت Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: توليد مفتاح التوقيع
+        run: |
+          keytool -genkey -v \
+            -keystore release.jks \
+            -alias retrohle \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass android \
+            -keypass android \
+            -dname "CN=RetroHLE, OU=Dev, O=Retro, L=City, S=State, C=US"
+
+      - name: بناء APK
+        run: cargo apk2 build --release
+
+      - name: رفع APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: verso-ui-apk
+          path: target/release/apk/**/*.apk
