@@ -1,0 +1,10 @@
+/data/data/com.termux/files/home/VERSO-UI/target/release/deps/glow-f6237353cf65cf4a.d: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/version.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/native.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/gl46.rs
+
+/data/data/com.termux/files/home/VERSO-UI/target/release/deps/libglow-f6237353cf65cf4a.rlib: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/version.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/native.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/gl46.rs
+
+/data/data/com.termux/files/home/VERSO-UI/target/release/deps/libglow-f6237353cf65cf4a.rmeta: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/version.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/native.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/gl46.rs
+
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/lib.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/version.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/native.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glow-0.12.3/src/gl46.rs:
