@@ -1,7 +1,4 @@
-use thumb_arm::emu_create;
-use thumb_arm::emu_step_batch;
-use thumb_arm::emu_get_pc;
-use thumb_arm::emu_destroy;
+use thumb_arm::{emu_create, emu_load_elf, emu_init_android, emu_step_batch, emu_get_pc, emu_destroy};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -28,7 +25,21 @@ fn android_main(app: AndroidApp) {
     let emu = emu_create();
     log::info!("Emulator created");
 
-    // ── 2. انتظار النافذة الأصلية ──
+    // ── 2. تحميل اللعبة ──
+    if let Ok(data) = std::fs::read("assets/libandengine.so") {
+        let entry = emu_load_elf(emu, data.as_ptr(), data.len() as u32);
+        if entry > 0 {
+            log::info!("ELF loaded, entry: 0x{:08X}", entry);
+            emu_init_android(emu);
+            log::info!("Android lifecycle initialized");
+        } else {
+            log::error!("Failed to load ELF");
+        }
+    } else {
+        log::warn!("libandengine.so not found in assets");
+    }
+
+    // ── 3. انتظار النافذة الأصلية ──
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -42,7 +53,7 @@ fn android_main(app: AndroidApp) {
     };
     log::info!("Native window acquired");
 
-    // ── 3. تهيئة EGL ──
+    // ── 4. تهيئة EGL ──
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -71,7 +82,7 @@ fn android_main(app: AndroidApp) {
         .expect("make_current");
     log::info!("EGL initialized");
 
-    // ── 4. إنشاء سياق glow (OpenGL) ──
+    // ── 5. إنشاء سياق glow (OpenGL) ──
     let gl = unsafe {
         glow::Context::from_loader_function(|name| {
             egl.get_proc_address(name).map_or(std::ptr::null(), |addr| addr as *const _)
@@ -79,7 +90,7 @@ fn android_main(app: AndroidApp) {
     };
     log::info!("OpenGL context created");
 
-    // ── 5. الحلقة الرئيسية ──
+    // ── 6. الحلقة الرئيسية ──
     let mut frame_count = 0u64;
     let start_time = std::time::Instant::now();
 
@@ -88,11 +99,13 @@ fn android_main(app: AndroidApp) {
         let steps = emu_step_batch(emu, 10000);
         let pc = emu_get_pc(emu);
 
-        // رسم الشاشة الحمراء (إثبات أن OpenGL يعمل)
+        // رسم الخلفية الحمراء
         unsafe {
             gl.clear_color(1.0, 0.0, 0.0, 1.0); // أحمر
             gl.clear(glow::COLOR_BUFFER_BIT);
         }
+
+        // (سنضيف رسم النصوص هنا في الخطوة التالية)
 
         // تبديل المخازن المؤقتة
         egl.swap_buffers(display, surface).expect("swap_buffers");
@@ -100,7 +113,7 @@ fn android_main(app: AndroidApp) {
         // معالجة الأحداث
         app.poll_events(Some(std::time::Duration::from_millis(1)), |_| {});
 
-        // طباعة معلومات كل 60 إطارًا
+        // طباعة معلومات في logcat فقط (مؤقتاً)
         frame_count += 1;
         if frame_count % 60 == 0 {
             let elapsed = start_time.elapsed().as_secs_f64();
@@ -108,7 +121,4 @@ fn android_main(app: AndroidApp) {
             log::info!("FPS: {:.1}, Steps: {}, PC: 0x{:08X}", fps, steps, pc);
         }
     }
-
-    // لن نصل هنا في التطبيق الحقيقي
-    // emu_destroy(emu);
 }
