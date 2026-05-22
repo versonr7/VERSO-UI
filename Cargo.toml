@@ -1,0 +1,15 @@
+[package]
+name = "verso-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thumb-arm = { git = "https://github.com/versonr7/Thumb-ARM" }
+android-activity = { version = "0.4.3", features = ["native-activity"] }
+khronos-egl = { version = "6.0.0", features = ["static", "no-pkg-config"] }
+glow = "0.12"
+log = "0.4"
+android_logger = "0.13"
+
+[lib]
+crate-type = ["cdylib"]
