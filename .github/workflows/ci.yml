@@ -24,11 +24,6 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-      - name: إنشاء أيقونة PNG (باستخدام ImageMagick)
-        run: |
-          sudo apt-get update && sudo apt-get install -y imagemagick
-          mkdir -p res/mipmap-hdpi
-          magick -size 72x72 xc:"#6200EE" res/mipmap-hdpi/ic_launcher.png
       - name: توليد مفتاح التوقيع
         run: |
           keytool -genkey -v -keystore release.jks -alias retrohle -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=RetroHLE, OU=Dev, O=Retro, L=City, S=State, C=US"
