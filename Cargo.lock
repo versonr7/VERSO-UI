@@ -86,12 +86,12 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 [[package]]
 name = "core"
 version = "0.3.0"
-source = "git+https://github.com/versonr7/Thumb-ARM#e15d8061d4cc5f7eebf8c7e02fcd5728ede61f37"
+source = "git+https://github.com/versonr7/Thumb-ARM#811df13b5538b934fa79aca80eeb3d577c2e82bb"
 
 [[package]]
 name = "emu"
 version = "0.3.0"
-source = "git+https://github.com/versonr7/Thumb-ARM#e15d8061d4cc5f7eebf8c7e02fcd5728ede61f37"
+source = "git+https://github.com/versonr7/Thumb-ARM#811df13b5538b934fa79aca80eeb3d577c2e82bb"
 dependencies = [
  "core",
 ]
@@ -186,7 +186,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hle"
 version = "0.3.0"
-source = "git+https://github.com/versonr7/Thumb-ARM#e15d8061d4cc5f7eebf8c7e02fcd5728ede61f37"
+source = "git+https://github.com/versonr7/Thumb-ARM#811df13b5538b934fa79aca80eeb3d577c2e82bb"
 dependencies = [
  "core",
  "emu",
@@ -538,11 +538,12 @@ dependencies = [
 [[package]]
 name = "thumb-arm"
 version = "0.3.0"
-source = "git+https://github.com/versonr7/Thumb-ARM#e15d8061d4cc5f7eebf8c7e02fcd5728ede61f37"
+source = "git+https://github.com/versonr7/Thumb-ARM#811df13b5538b934fa79aca80eeb3d577c2e82bb"
 dependencies = [
  "core",
  "emu",
  "hle",
+ "log",
 ]
 
 [[package]]
