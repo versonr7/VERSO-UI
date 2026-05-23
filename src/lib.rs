@@ -1,4 +1,4 @@
-use thumb_arm::{emu_create, emu_load_elf, emu_init_android, emu_step_batch, emu_get_pc, emu_destroy};
+use thumb_arm::{emu_create, emu_load_elf, emu_init_android, emu_step_batch, emu_get_pc};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -19,27 +19,20 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("Verso UI starting (EGL + OpenGL + Thumb-ARM)");
+    log::info!("Verso UI starting");
 
-    // ── 1. إنشاء المحاكي ──
     let emu = emu_create();
-    log::info!("Emulator created");
 
-    // ── 2. تحميل اللعبة ──
+    // تحميل اللعبة
     if let Ok(data) = std::fs::read("assets/libandengine.so") {
         let entry = emu_load_elf(emu, data.as_ptr(), data.len() as u32);
         if entry > 0 {
             log::info!("ELF loaded, entry: 0x{:08X}", entry);
             emu_init_android(emu);
-            log::info!("Android lifecycle initialized");
-        } else {
-            log::error!("Failed to load ELF");
         }
-    } else {
-        log::warn!("libandengine.so not found in assets");
     }
 
-    // ── 3. انتظار النافذة الأصلية ──
+    // انتظار النافذة
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -51,9 +44,8 @@ fn android_main(app: AndroidApp) {
             }
         }
     };
-    log::info!("Native window acquired");
 
-    // ── 4. تهيئة EGL ──
+    // تهيئة EGL
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -62,9 +54,7 @@ fn android_main(app: AndroidApp) {
     let config_attribs = [
         egl::RENDERABLE_TYPE, egl::OPENGL_ES2_BIT as i32,
         egl::SURFACE_TYPE, egl::WINDOW_BIT as i32,
-        egl::BLUE_SIZE, 8,
-        egl::GREEN_SIZE, 8,
-        egl::RED_SIZE, 8,
+        egl::BLUE_SIZE, 8, egl::GREEN_SIZE, 8, egl::RED_SIZE, 8,
         egl::NONE,
     ];
     let config = egl.choose_first_config(display, &config_attribs)
@@ -80,45 +70,84 @@ fn android_main(app: AndroidApp) {
         .expect("create_context");
     egl.make_current(display, Some(surface), Some(surface), Some(context))
         .expect("make_current");
-    log::info!("EGL initialized");
 
-    // ── 5. إنشاء سياق glow (OpenGL) ──
     let gl = unsafe {
         glow::Context::from_loader_function(|name| {
             egl.get_proc_address(name).map_or(std::ptr::null(), |addr| addr as *const _)
         })
     };
-    log::info!("OpenGL context created");
 
-    // ── 6. الحلقة الرئيسية ──
-    let mut frame_count = 0u64;
-    let start_time = std::time::Instant::now();
+    // ══════════════════════════════════════════
+    // 🟦 إعداد VAO, VBO, Shader
+    // ══════════════════════════════════════════
+    let vao = unsafe { gl.create_vertex_array().unwrap() };
+    let vbo = unsafe { gl.create_buffer().unwrap() };
 
+    // 6 رؤوس (مثلثين) → مستطيل
+    let vertices: [f32; 18] = [
+        -0.5,  0.5, 0.0,  // أعلى اليسار
+        -0.5, -0.5, 0.0,  // أسفل اليسار
+         0.5, -0.5, 0.0,  // أسفل اليمين
+        -0.5,  0.5, 0.0,  // أعلى اليسار
+         0.5, -0.5, 0.0,  // أسفل اليمين
+         0.5,  0.5, 0.0,  // أعلى اليمين
+    ];
+
+    unsafe {
+        gl.bind_vertex_array(Some(vao));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+        gl.buffer_data_u8_slice(
+            glow::ARRAY_BUFFER,
+            bytemuck::cast_slice(&vertices),
+            glow::STATIC_DRAW,
+        );
+        gl.vertex_attrib_pointer_f32(
+            0, 3, glow::FLOAT, false, 0, 0,
+        );
+        gl.enable_vertex_attrib_array(0);
+        gl.bind_vertex_array(None);
+    }
+
+    // Shader بسيط
+    let vs = unsafe { gl.create_shader(glow::VERTEX_SHADER).unwrap() };
+    let fs = unsafe { gl.create_shader(glow::FRAGMENT_SHADER).unwrap() };
+    let program = unsafe { gl.create_program().unwrap() };
+
+    unsafe {
+        gl.shader_source(vs, "
+            attribute vec3 aPos;
+            void main() { gl_Position = vec4(aPos, 1.0); }
+        ");
+        gl.compile_shader(vs);
+
+        gl.shader_source(fs, "
+            void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }
+        ");
+        gl.compile_shader(fs);
+
+        gl.attach_shader(program, vs);
+        gl.attach_shader(program, fs);
+        gl.link_program(program);
+    }
+
+    // ══════════════════════════════════════════
+    // 🔁 الحلقة الرئيسية
+    // ══════════════════════════════════════════
     loop {
-        // تنفيذ خطوات المحاكي
-        let steps = emu_step_batch(emu, 10000);
-        let pc = emu_get_pc(emu);
+        emu_step_batch(emu, 10000);
 
-        // رسم الخلفية الحمراء
         unsafe {
-            gl.clear_color(1.0, 0.0, 0.0, 1.0); // أحمر
+            gl.clear_color(0.0, 0.0, 0.0, 1.0); // خلفية سوداء
             gl.clear(glow::COLOR_BUFFER_BIT);
+
+            // رسم المستطيل الأخضر
+            gl.use_program(Some(program));
+            gl.bind_vertex_array(Some(vao));
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+            gl.bind_vertex_array(None);
         }
 
-        // (سنضيف رسم النصوص هنا في الخطوة التالية)
-
-        // تبديل المخازن المؤقتة
         egl.swap_buffers(display, surface).expect("swap_buffers");
-
-        // معالجة الأحداث
         app.poll_events(Some(std::time::Duration::from_millis(1)), |_| {});
-
-        // طباعة معلومات في logcat فقط (مؤقتاً)
-        frame_count += 1;
-        if frame_count % 60 == 0 {
-            let elapsed = start_time.elapsed().as_secs_f64();
-            let fps = frame_count as f64 / elapsed;
-            log::info!("FPS: {:.1}, Steps: {}, PC: 0x{:08X}", fps, steps, pc);
-        }
     }
 }
