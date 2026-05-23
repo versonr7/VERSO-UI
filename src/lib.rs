@@ -1,4 +1,4 @@
-use thumb_arm::{emu_create, emu_load_elf, emu_init_android, emu_step_batch, emu_get_pc};
+use thumb_arm::{emu_create, emu_load_elf, emu_init_android, emu_step_batch};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
