@@ -21,9 +21,9 @@ target_sdk_version = 33
 min_sdk_version = 21
 features = ["native-activity"]
 resources = "res"
-icon = "@mipmap/ic_launcher"
 
 [package.metadata.android.application]
+icon = "@mipmap/ic_launcher"
 label = "Verso UI"
 
 [[package.metadata.android.application.activity]]
@@ -41,5 +41,3 @@ path = "release.jks"
 keystore_password = "android"
 key_alias = "retrohle"
 key_password = "android"
-glyph_brush = "0.7"
-rusttype = "0.9"
