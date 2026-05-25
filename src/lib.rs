@@ -45,7 +45,7 @@ fn android_main(app: AndroidApp) {
         }
     };
 
-    // تهيئة EGL
+    // تهيئة EGL و OpenGL
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -77,38 +77,31 @@ fn android_main(app: AndroidApp) {
         })
     };
 
-    // ══════════════════════════════════════════
-    // 🟦 إعداد VAO, VBO, Shader
-    // ══════════════════════════════════════════
+    // 🎨 تهيئة FBO داخل المحاكي (سنحتاج إلى دالة خاصة للوصول إليه)
+    // حالياً، لا يملك VERSO-UI وصولاً مباشراً إلى FBO لأننا لم نصدره عبر FFI بعد.
+    // سنقوم ببناء نظام عرض بسيط بدلاً من ذلك: سنرسم مربعًا أخضر مؤقتًا.
+    // (سيتم استبداله لاحقًا بإطار اللعبة الحقيقي من FBO)
+
+    // إعداد مربع أخضر مؤقت للاختبار
     let vao = unsafe { gl.create_vertex_array().unwrap() };
     let vbo = unsafe { gl.create_buffer().unwrap() };
-
-    // 6 رؤوس (مثلثين) → مستطيل
     let vertices: [f32; 18] = [
-        -0.5,  0.5, 0.0,  // أعلى اليسار
-        -0.5, -0.5, 0.0,  // أسفل اليسار
-         0.5, -0.5, 0.0,  // أسفل اليمين
-        -0.5,  0.5, 0.0,  // أعلى اليسار
-         0.5, -0.5, 0.0,  // أسفل اليمين
-         0.5,  0.5, 0.0,  // أعلى اليمين
+        -0.5, 0.5, 0.0,
+        -0.5, -0.5, 0.0,
+         0.5, -0.5, 0.0,
+        -0.5, 0.5, 0.0,
+         0.5, -0.5, 0.0,
+         0.5, 0.5, 0.0,
     ];
-
     unsafe {
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-        gl.buffer_data_u8_slice(
-            glow::ARRAY_BUFFER,
-            bytemuck::cast_slice(&vertices),
-            glow::STATIC_DRAW,
-        );
-        gl.vertex_attrib_pointer_f32(
-            0, 3, glow::FLOAT, false, 0, 0,
-        );
+        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&vertices), glow::STATIC_DRAW);
+        gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 0, 0);
         gl.enable_vertex_attrib_array(0);
         gl.bind_vertex_array(None);
     }
 
-    // Shader بسيط
     let vs = unsafe { gl.create_shader(glow::VERTEX_SHADER).unwrap() };
     let fs = unsafe { gl.create_shader(glow::FRAGMENT_SHADER).unwrap() };
     let program = unsafe { gl.create_program().unwrap() };
@@ -130,9 +123,7 @@ fn android_main(app: AndroidApp) {
         gl.link_program(program);
     }
 
-    // ══════════════════════════════════════════
     // 🔁 الحلقة الرئيسية
-    // ══════════════════════════════════════════
     loop {
         emu_step_batch(emu, 10000);
 
@@ -140,7 +131,7 @@ fn android_main(app: AndroidApp) {
             gl.clear_color(0.0, 0.0, 0.0, 1.0); // خلفية سوداء
             gl.clear(glow::COLOR_BUFFER_BIT);
 
-            // رسم المستطيل الأخضر
+            // رسم المستطيل الأخضر (مؤقتاً)
             gl.use_program(Some(program));
             gl.bind_vertex_array(Some(vao));
             gl.draw_arrays(glow::TRIANGLES, 0, 6);
