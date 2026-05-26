@@ -1,4 +1,5 @@
-use thumb_arm::{emu_create, emu_load_elf, emu_init_android, emu_step_batch};
+use thumb_arm::{emu_create, emu_load_elf, emu_init_android, emu_step_batch, emu_get_pc};
+use std::rc::Rc;
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -19,11 +20,10 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("Verso UI starting");
+    log::info!("Verso UI starting (Dear ImGui + glow)");
 
     let emu = emu_create();
 
-    // تحميل اللعبة
     if let Ok(data) = std::fs::read("assets/libandengine.so") {
         let entry = emu_load_elf(emu, data.as_ptr(), data.len() as u32);
         if entry > 0 {
@@ -32,7 +32,6 @@ fn android_main(app: AndroidApp) {
         }
     }
 
-    // انتظار النافذة
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -45,7 +44,6 @@ fn android_main(app: AndroidApp) {
         }
     };
 
-    // تهيئة EGL و OpenGL
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -71,72 +69,62 @@ fn android_main(app: AndroidApp) {
     egl.make_current(display, Some(surface), Some(surface), Some(context))
         .expect("make_current");
 
-    let gl = unsafe {
+    let gl = Rc::new(unsafe {
         glow::Context::from_loader_function(|name| {
             egl.get_proc_address(name).map_or(std::ptr::null(), |addr| addr as *const _)
         })
-    };
+    });
 
-    // 🎨 تهيئة FBO داخل المحاكي (سنحتاج إلى دالة خاصة للوصول إليه)
-    // حالياً، لا يملك VERSO-UI وصولاً مباشراً إلى FBO لأننا لم نصدره عبر FFI بعد.
-    // سنقوم ببناء نظام عرض بسيط بدلاً من ذلك: سنرسم مربعًا أخضر مؤقتًا.
-    // (سيتم استبداله لاحقًا بإطار اللعبة الحقيقي من FBO)
+    // 🎨 تهيئة Dear ImGui
+    let mut imgui = imgui::Context::create();
+    imgui.set_ini_filename(None);
 
-    // إعداد مربع أخضر مؤقت للاختبار
-    let vao = unsafe { gl.create_vertex_array().unwrap() };
-    let vbo = unsafe { gl.create_buffer().unwrap() };
-    let vertices: [f32; 18] = [
-        -0.5, 0.5, 0.0,
-        -0.5, -0.5, 0.0,
-         0.5, -0.5, 0.0,
-        -0.5, 0.5, 0.0,
-         0.5, -0.5, 0.0,
-         0.5, 0.5, 0.0,
-    ];
-    unsafe {
-        gl.bind_vertex_array(Some(vao));
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&vertices), glow::STATIC_DRAW);
-        gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 0, 0);
-        gl.enable_vertex_attrib_array(0);
-        gl.bind_vertex_array(None);
-    }
+    // استخدام Default::default() لإنشاء SimpleTextureMap
+    let mut texture_map: imgui_glow_renderer::SimpleTextureMap = Default::default();
+    let mut renderer = imgui_glow_renderer::Renderer::initialize(
+        &gl,
+        &mut imgui,
+        &mut texture_map,
+        false,
+    ).expect("فشل في تهيئة Renderer");
 
-    let vs = unsafe { gl.create_shader(glow::VERTEX_SHADER).unwrap() };
-    let fs = unsafe { gl.create_shader(glow::FRAGMENT_SHADER).unwrap() };
-    let program = unsafe { gl.create_program().unwrap() };
-
-    unsafe {
-        gl.shader_source(vs, "
-            attribute vec3 aPos;
-            void main() { gl_Position = vec4(aPos, 1.0); }
-        ");
-        gl.compile_shader(vs);
-
-        gl.shader_source(fs, "
-            void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }
-        ");
-        gl.compile_shader(fs);
-
-        gl.attach_shader(program, vs);
-        gl.attach_shader(program, fs);
-        gl.link_program(program);
-    }
-
-    // 🔁 الحلقة الرئيسية
+    let mut last_time = std::time::Instant::now();
     loop {
-        emu_step_batch(emu, 10000);
+        let now = std::time::Instant::now();
+        let delta = now - last_time;
+        last_time = now;
+        let delta_s = delta.as_secs_f64();
 
+        let io = imgui.io_mut();
+        io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
+
+        let steps = emu_step_batch(emu, 10000);
+        let pc = emu_get_pc(emu);
+
+        let ui = imgui.new_frame();
+        ui.window("VERSO-UI")
+            .size([400.0, 300.0], imgui::Condition::FirstUseEver)
+            .build(|| {
+                ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
+                ui.text(format!("PC: 0x{:08X}", pc));
+                ui.text(format!("Steps: {}", steps));
+
+                if ui.button("Pause") {
+                    log::info!("Pause button clicked");
+                }
+                if ui.button("Resume") {
+                    log::info!("Resume button clicked");
+                }
+            });
+
+        // مسح الخلفية
         unsafe {
-            gl.clear_color(0.0, 0.0, 0.0, 1.0); // خلفية سوداء
+            gl.clear_color(0.1, 0.1, 0.1, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
-
-            // رسم المستطيل الأخضر (مؤقتاً)
-            gl.use_program(Some(program));
-            gl.bind_vertex_array(Some(vao));
-            gl.draw_arrays(glow::TRIANGLES, 0, 6);
-            gl.bind_vertex_array(None);
         }
+
+        let draw_data = imgui.render();
+        renderer.render(&gl, &mut texture_map, draw_data).expect("فشل في رسم ImGui");
 
         egl.swap_buffers(display, surface).expect("swap_buffers");
         app.poll_events(Some(std::time::Duration::from_millis(1)), |_| {});
