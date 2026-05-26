@@ -21,7 +21,7 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Verso UI (with Touch Support) ===");
+    log::info!("=== Verso UI (Touch Fixed) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -83,75 +83,65 @@ fn android_main(app: AndroidApp) {
         false,
     ).expect("ImGui renderer init");
 
+    // ✅ متغيرات لتخزين حالة اللمس بين الإطارات
+    let mut mouse_pos = [0.0f32, 0.0f32];
+    let mut mouse_down = false;
+
     let mut last_time = std::time::Instant::now();
-    let mut frame_count = 0u64;
 
     loop {
         let now = std::time::Instant::now();
         let delta = now - last_time;
         last_time = now;
         let delta_s = delta.as_secs_f64();
-        frame_count += 1;
 
-        // ✅ معالجة أحداث اللمس (الطريقة الصحيحة للإصدار 0.4.3)
+        // ✅ 1. معالجة أحداث اللمس وتخزينها مؤقتاً
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
-        
+
         app.input_events(|event| {
-            match event {
-                InputEvent::MotionEvent(motion) => {
-                    let action = motion.action();
-                    if let Some(pointer) = motion.pointers().next() {
-                        let x = pointer.x() as f32;
-                        let y = pointer.y() as f32;
-                        
-                        let io = imgui.io_mut();
-                        io.mouse_pos = [x, y];
-                        
-                        match action {
-                            MotionAction::Down | MotionAction::PointerDown => {
-                                io.mouse_down[0] = true;
-                            }
-                            MotionAction::Up | MotionAction::PointerUp => {
-                                io.mouse_down[0] = false;
-                            }
-                            MotionAction::Move | MotionAction::HoverMove => {
-                                // تحريك فقط
-                            }
-                            _ => {}
-                        }
+            if let InputEvent::MotionEvent(motion) = event {
+                if let Some(pointer) = motion.pointers().next() {
+                    mouse_pos = [pointer.x() as f32, pointer.y() as f32];
+                    match motion.action() {
+                        MotionAction::Down | MotionAction::PointerDown => mouse_down = true,
+                        MotionAction::Up | MotionAction::PointerUp => mouse_down = false,
+                        _ => {}
                     }
-                    InputStatus::Handled
                 }
-                _ => InputStatus::Unhandled,
+                InputStatus::Handled
+            } else {
+                InputStatus::Unhandled
             }
         });
 
+        // ✅ 2. تحديث ImGui بحالة اللمس المحفوظة
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
+        io.mouse_pos = mouse_pos;
+        io.mouse_down[0] = mouse_down;
 
+        // ✅ 3. بناء واجهة المستخدم
         let ui = imgui.new_frame();
         ui.window("VERSO-UI")
             .size([400.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.text(format!("Frame: {}", frame_count));
+                ui.text(format!("Touch: ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]));
                 if ui.button("Click me") {
-                    log::info!("Button clicked!");
+                    log::info!("✅ Button clicked!");
                 }
             });
 
+        // ✅ 4. رسم كل شيء
         unsafe {
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
         }
-
         let draw_data = imgui.render();
         renderer.render(&gl, &mut texture_map, draw_data).expect("ImGui render");
 
         egl.swap_buffers(display, surface).expect("swap_buffers");
-        
-        // معالجة أحداث دورة الحياة
         app.poll_events(Some(std::time::Duration::from_millis(0)), |_| {});
     }
 }
