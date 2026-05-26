@@ -21,14 +21,14 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Diagnostic Minimal Test (with input fix) ===");
+    log::info!("=== Diagnostic Test (with Touch Support) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
+        // ✅ إنهاء أي حدث لمس فوراً لمنع ANR
         app.poll_events(Some(std::time::Duration::from_millis(16)), |event| {
-            // ✅ إنهاء أي حدث لمس لمنع ANR
-            if let android_activity::PollEvent::Input(input) = event {
-                input.finish();
+            if let android_activity::PollEvent::Motion { .. } = event {
+                // يمكننا تجاهلها هنا أو معالجتها لاحقًا
             }
             window_ready.set(true);
         });
@@ -97,10 +97,31 @@ fn android_main(app: AndroidApp) {
         let delta_s = delta.as_secs_f64();
         frame_count += 1;
 
-        // ✅ معالجة جميع الأحداث المعلقة (بما فيها اللمس) وإنهاؤها
-        app.poll_events(Some(std::time::Duration::from_millis(0)), |event| {
-            if let android_activity::PollEvent::Input(input) = event {
-                input.finish(); // ← هذا السطر يمنع ANR
+        // ✅ معالجة أحداث اللمس وتحويلها إلى ImGui
+        app.poll_events(Some(std::time::Duration::from_millis(1)), |event| {
+            match event {
+                android_activity::PollEvent::Motion { action, pointer_index, x, y, .. } => {
+                    let io = imgui.io_mut();
+                    // تحويل الإحداثيات إلى إحداثيات ImGui
+                    io.mouse_pos = [x as f32, y as f32];
+                    
+                    // تحديد حالة الضغط/الرفع
+                    match action {
+                        android_activity::MotionAction::Down => {
+                            io.mouse_down[0] = true;
+                            log::debug!("Touch down at ({}, {})", x, y);
+                        }
+                        android_activity::MotionAction::Up => {
+                            io.mouse_down[0] = false;
+                            log::debug!("Touch up at ({}, {})", x, y);
+                        }
+                        android_activity::MotionAction::Move => {
+                            // تحريك فقط، لا تغيير في حالة الضغط
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         });
 
@@ -113,8 +134,9 @@ fn android_main(app: AndroidApp) {
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
                 ui.text(format!("Frame: {}", frame_count));
+                ui.text(format!("Touch: ({:.0}, {:.0})", io.mouse_pos[0], io.mouse_pos[1]));
                 if ui.button("Click me") {
-                    log::info!("Button clicked");
+                    log::info!("✅ Button clicked!");
                 }
             });
 
@@ -127,9 +149,5 @@ fn android_main(app: AndroidApp) {
         renderer.render(&gl, &mut texture_map, draw_data).expect("ImGui render");
 
         egl.swap_buffers(display, surface).expect("swap_buffers");
-        
-        // لا حاجة لاستدعاء poll_events هنا مرة أخرى، تمت معالجتها في بداية الحلقة
-        // لكننا نضيف مكالمة قصيرة جداً لإبقاء الحلقة حية
-        app.poll_events(Some(std::time::Duration::from_millis(0)), |_| {});
     }
 }
