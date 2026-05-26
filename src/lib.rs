@@ -21,11 +21,15 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Diagnostic Minimal Test ===");
+    log::info!("=== Diagnostic Minimal Test (with input fix) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
-        app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
+        app.poll_events(Some(std::time::Duration::from_millis(16)), |event| {
+            // ✅ إنهاء أي حدث لمس لمنع ANR
+            if let android_activity::PollEvent::Input(input) = event {
+                input.finish();
+            }
             window_ready.set(true);
         });
         if window_ready.get() {
@@ -93,6 +97,13 @@ fn android_main(app: AndroidApp) {
         let delta_s = delta.as_secs_f64();
         frame_count += 1;
 
+        // ✅ معالجة جميع الأحداث المعلقة (بما فيها اللمس) وإنهاؤها
+        app.poll_events(Some(std::time::Duration::from_millis(0)), |event| {
+            if let android_activity::PollEvent::Input(input) = event {
+                input.finish(); // ← هذا السطر يمنع ANR
+            }
+        });
+
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
 
@@ -116,6 +127,9 @@ fn android_main(app: AndroidApp) {
         renderer.render(&gl, &mut texture_map, draw_data).expect("ImGui render");
 
         egl.swap_buffers(display, surface).expect("swap_buffers");
-        app.poll_events(Some(std::time::Duration::from_millis(1)), |_| {});
+        
+        // لا حاجة لاستدعاء poll_events هنا مرة أخرى، تمت معالجتها في بداية الحلقة
+        // لكننا نضيف مكالمة قصيرة جداً لإبقاء الحلقة حية
+        app.poll_events(Some(std::time::Duration::from_millis(0)), |_| {});
     }
 }
