@@ -13,6 +13,34 @@ use std::cell::Cell;
 extern "C" {}
 
 #[cfg(target_os = "android")]
+fn load_game_from_assets(app: &AndroidApp, emu: *mut std::ffi::c_void) {
+    let asset_manager = app.asset_manager();
+    let filename = std::ffi::CString::new("libandengine.so").expect("CString failed");
+    
+    match asset_manager.open(&filename) {
+        Some(mut asset) => {
+            use std::io::Read;
+            let mut elf_data = Vec::new();
+            if asset.read_to_end(&mut elf_data).is_ok() && !elf_data.is_empty() {
+                log::info!("Loaded libandengine.so ({} bytes) from assets", elf_data.len());
+                let entry = emu_load_elf(emu, elf_data.as_ptr(), elf_data.len() as u32);
+                if entry > 0 {
+                    log::info!("ELF loaded, entry: 0x{:08X}", entry);
+                    emu_init_android(emu);
+                } else {
+                    log::error!("Failed to load ELF (entry = 0)");
+                }
+            } else {
+                log::error!("Failed to read libandengine.so from assets");
+            }
+        }
+        None => {
+            log::warn!("libandengine.so not found in assets (this is OK for testing)");
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: AndroidApp) {
     android_logger::init_once(
@@ -24,14 +52,10 @@ fn android_main(app: AndroidApp) {
 
     let emu = emu_create();
 
-    if let Ok(data) = std::fs::read("assets/libandengine.so") {
-        let entry = emu_load_elf(emu, data.as_ptr(), data.len() as u32);
-        if entry > 0 {
-            log::info!("ELF loaded, entry: 0x{:08X}", entry);
-            emu_init_android(emu);
-        }
-    }
+    // تحميل اللعبة باستخدام AssetManager (الطريقة الصحيحة لأندرويد)
+    load_game_from_assets(&app, emu);
 
+    // انتظار النافذة الأصلية
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -43,7 +67,9 @@ fn android_main(app: AndroidApp) {
             }
         }
     };
+    log::info!("Native window acquired");
 
+    // تهيئة EGL و OpenGL ES
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -68,18 +94,20 @@ fn android_main(app: AndroidApp) {
         .expect("create_context");
     egl.make_current(display, Some(surface), Some(surface), Some(context))
         .expect("make_current");
+    log::info!("EGL initialized");
 
     let gl = Rc::new(unsafe {
         glow::Context::from_loader_function(|name| {
             egl.get_proc_address(name).map_or(std::ptr::null(), |addr| addr as *const _)
         })
     });
+    log::info!("OpenGL context created");
 
     // 🎨 تهيئة Dear ImGui
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
+    log::info!("ImGui context created");
 
-    // استخدام Default::default() لإنشاء SimpleTextureMap
     let mut texture_map: imgui_glow_renderer::SimpleTextureMap = Default::default();
     let mut renderer = imgui_glow_renderer::Renderer::initialize(
         &gl,
@@ -87,8 +115,12 @@ fn android_main(app: AndroidApp) {
         &mut texture_map,
         false,
     ).expect("فشل في تهيئة Renderer");
+    log::info!("ImGui renderer initialized");
 
+    // 🔁 الحلقة الرئيسية
     let mut last_time = std::time::Instant::now();
+    let mut frame_count = 0u64;
+
     loop {
         let now = std::time::Instant::now();
         let delta = now - last_time;
@@ -98,9 +130,11 @@ fn android_main(app: AndroidApp) {
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
 
+        // تنفيذ المحاكي
         let steps = emu_step_batch(emu, 10000);
         let pc = emu_get_pc(emu);
 
+        // بناء واجهة ImGui
         let ui = imgui.new_frame();
         ui.window("VERSO-UI")
             .size([400.0, 300.0], imgui::Condition::FirstUseEver)
@@ -128,5 +162,10 @@ fn android_main(app: AndroidApp) {
 
         egl.swap_buffers(display, surface).expect("swap_buffers");
         app.poll_events(Some(std::time::Duration::from_millis(1)), |_| {});
+
+        frame_count += 1;
+        if frame_count == 1 {
+            log::info!("First frame rendered successfully!");
+        }
     }
 }
