@@ -1,5 +1,8 @@
-/data/data/com.termux/files/home/VERSO-UI/target/release/deps/verso_ui.d: src/lib.rs
+/data/data/com.termux/files/home/VERSO-UI/target/release/deps/verso_ui.d: src/lib.rs src/ui/mod.rs src/ui/log_viewer.rs src/ui/file_browser.rs
 
-/data/data/com.termux/files/home/VERSO-UI/target/release/deps/libverso_ui.so: src/lib.rs
+/data/data/com.termux/files/home/VERSO-UI/target/release/deps/libverso_ui.so: src/lib.rs src/ui/mod.rs src/ui/log_viewer.rs src/ui/file_browser.rs
 
 src/lib.rs:
+src/ui/mod.rs:
+src/ui/log_viewer.rs:
+src/ui/file_browser.rs:
