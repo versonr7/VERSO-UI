@@ -21,7 +21,7 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Verso UI (Click Fixed) ===");
+    log::info!("=== Verso UI (Click Fixed v2) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -83,9 +83,10 @@ fn android_main(app: AndroidApp) {
         false,
     ).expect("ImGui renderer init");
 
-    // متغيرات لتخزين حالة اللمس
+    // 🎯 متغيرات لتخزين حالة اللمس مع التأخير
     let mut mouse_pos = [0.0f32, 0.0f32];
     let mut mouse_down = false;
+    let mut pending_mouse_up = false; // ← تأخير حدث UP
 
     let mut last_time = std::time::Instant::now();
 
@@ -95,7 +96,7 @@ fn android_main(app: AndroidApp) {
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // ✅ الخطوة 1: معالجة جميع أحداث اللمس أولاً
+        // ✅ الخطوة 1: جمع أحداث اللمس
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
 
@@ -106,10 +107,12 @@ fn android_main(app: AndroidApp) {
                     match motion.action() {
                         MotionAction::Down | MotionAction::PointerDown => {
                             mouse_down = true;
+                            pending_mouse_up = false; // إلغاء أي تأخير سابق
                             log::debug!("Touch DOWN at ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]);
                         }
                         MotionAction::Up | MotionAction::PointerUp => {
-                            mouse_down = false;
+                            // 🎯 بدلاً من رفع mouse_down فوراً، نؤجله لإطار واحد
+                            pending_mouse_up = true;
                             log::debug!("Touch UP at ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]);
                         }
                         _ => {}
@@ -121,26 +124,32 @@ fn android_main(app: AndroidApp) {
             }
         });
 
-        // ✅ الخطوة 2: تحديث ImGui IO بالإدخال الذي تم تجميعه
+        // ✅ الخطوة 2: تطبيق التأخير - رفع mouse_down بعد إطار واحد
+        if pending_mouse_up {
+            mouse_down = false;
+            pending_mouse_up = false;
+        }
+
+        // ✅ الخطوة 3: تحديث ImGui IO بالإدخال
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
         io.mouse_pos = mouse_pos;
         io.mouse_down[0] = mouse_down;
 
-        // ✅ الخطوة 3: بدء إطار ImGui جديد (يستخدم الإدخال المحدّث)
+        // ✅ الخطوة 4: بناء واجهة المستخدم
         let ui = imgui.new_frame();
-
         ui.window("VERSO-UI")
             .size([400.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
                 ui.text(format!("Touch: ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]));
+                ui.text(format!("Mouse: {}", if mouse_down { "DOWN" } else { "up" }));
                 if ui.button("Click me") {
                     log::info!("✅ Button clicked!");
                 }
             });
 
-        // ✅ الخطوة 4: رسم كل شيء
+        // ✅ الخطوة 5: رسم كل شيء
         unsafe {
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
@@ -150,8 +159,6 @@ fn android_main(app: AndroidApp) {
         renderer.render(&gl, &mut texture_map, draw_data).expect("ImGui render");
 
         egl.swap_buffers(display, surface).expect("swap_buffers");
-
-        // ✅ الخطوة 5: معالجة أحداث دورة الحياة (حيوية)
         app.poll_events(Some(std::time::Duration::from_millis(0)), |_| {});
     }
 }
