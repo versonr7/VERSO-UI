@@ -1,5 +1,4 @@
 use std::rc::Rc;
-use std::panic;
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -15,22 +14,11 @@ extern "C" {}
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: AndroidApp) {
-    // اعتراض أي panic وكتابته إلى ملف
-    panic::set_hook(Box::new(|info| {
-        let msg = format!("PANIC: {:?}", info);
-        let _ = std::fs::write("/storage/emulated/0/verso_error.log", &msg);
-    }));
-
-    // بدء المسجل
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-
-    // كتابة رسالة بدء التشغيل إلى ملف
-    let _ = std::fs::write("/storage/emulated/0/verso_error.log", "Starting VERSO-UI...\n");
-
     log::info!("=== ImGui Minimal Test ===");
 
     let window_ready = Cell::new(false);
@@ -80,6 +68,9 @@ fn android_main(app: AndroidApp) {
     // تهيئة Dear ImGui
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
+
+    // ✅ تعيين حجم الشاشة (ضروري لمنع assertion failed)
+    imgui.io_mut().display_size = [1920.0, 1080.0];
 
     let mut texture_map: imgui_glow_renderer::SimpleTextureMap = Default::default();
     let mut renderer = imgui_glow_renderer::Renderer::initialize(
