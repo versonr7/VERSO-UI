@@ -1,7 +1,6 @@
 mod ui;
 
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -14,38 +13,6 @@ use std::cell::Cell;
 #[link(name = "GLESv2")]
 extern "C" {}
 
-// 🎯 تغليف المؤشر الخام في هيكل آمن
-pub struct EmuHandle(*mut std::ffi::c_void);
-unsafe impl Send for EmuHandle {}
-unsafe impl Sync for EmuHandle {}
-
-#[cfg(target_os = "android")]
-fn load_game_from_assets(app: &AndroidApp, emu: &EmuHandle, log: &mut ui::log_viewer::LogViewer) {
-    let asset_manager = app.asset_manager();
-    let filename = std::ffi::CString::new("libandengine.so").expect("CString failed");
-    match asset_manager.open(&filename) {
-        Some(mut asset) => {
-            use std::io::Read;
-            let mut elf_data = Vec::new();
-            if asset.read_to_end(&mut elf_data).is_ok() && !elf_data.is_empty() {
-                log.add(format!("✅ Loaded libandengine.so ({} bytes)", elf_data.len()));
-                use thumb_arm::{emu_load_elf, emu_init_android};
-                let entry = emu_load_elf(emu.0, elf_data.as_ptr(), elf_data.len() as u32);
-                if entry > 0 {
-                    log.add(format!("✅ ELF entry: 0x{:08X}", entry));
-                    emu_init_android(emu.0);
-                    log.add("✅ Android lifecycle initialized".to_string());
-                } else {
-                    log.add("❌ Failed to load ELF (entry = 0)".to_string());
-                }
-            }
-        }
-        None => {
-            log.add("⚠️ libandengine.so not found in assets".to_string());
-        }
-    }
-}
-
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: AndroidApp) {
@@ -54,15 +21,7 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-
-    let mut log_viewer = ui::log_viewer::LogViewer::new(200);
-    log_viewer.add("🚀 VERSO-UI starting...".to_string());
-
-    use thumb_arm::emu_create;
-    let emu = EmuHandle(emu_create());
-    log_viewer.add("✅ Emulator created".to_string());
-
-    load_game_from_assets(&app, &emu, &mut log_viewer);
+    log::info!("=== Diagnostic Minimal Test ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -75,13 +34,12 @@ fn android_main(app: AndroidApp) {
             }
         }
     };
-    log_viewer.add("✅ Native window acquired".to_string());
+    log::info!("Window acquired");
 
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
     egl.initialize(display).expect("eglInitialize");
-    log_viewer.add("✅ EGL initialized".to_string());
 
     let config_attribs = [
         egl::RENDERABLE_TYPE, egl::OPENGL_ES2_BIT as i32,
@@ -102,22 +60,20 @@ fn android_main(app: AndroidApp) {
         .expect("create_context");
     egl.make_current(display, Some(surface), Some(surface), Some(context))
         .expect("make_current");
-    log_viewer.add("✅ EGL fully initialized".to_string());
 
     let gl = Rc::new(unsafe {
         glow::Context::from_loader_function(|name| {
             egl.get_proc_address(name).map_or(std::ptr::null(), |addr| addr as *const _)
         })
     });
-    log_viewer.add("✅ glow context created".to_string());
 
+    // تهيئة Dear ImGui
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
 
     let screen_width = native_window.width() as f32;
     let screen_height = native_window.height() as f32;
     imgui.io_mut().display_size = [screen_width, screen_height];
-    log_viewer.add(format!("🖥️ Screen resolution: {}x{}", screen_width, screen_height));
 
     let mut texture_map: imgui_glow_renderer::SimpleTextureMap = Default::default();
     let mut renderer = imgui_glow_renderer::Renderer::initialize(
@@ -126,77 +82,33 @@ fn android_main(app: AndroidApp) {
         &mut texture_map,
         false,
     ).expect("ImGui renderer init");
-    log_viewer.add("✅ ImGui renderer initialized".to_string());
-
-    let start_path = "/storage/emulated/0".to_string();
-    let mut file_browser = ui::file_browser::FileBrowser::new(&start_path);
-    log_viewer.add(format!("📂 File browser ready at {}", start_path));
-
-    // 🎯 تشغيل المحاكي في خيط منفصل مع EmuHandle الآمن
-    let emu = Arc::new(Mutex::new(emu));
-    let emu_clone = emu.clone();
-    std::thread::spawn(move || {
-        loop {
-            let mut emu = emu_clone.lock().unwrap();
-            use thumb_arm::emu_step_batch;
-            emu_step_batch(emu.0, 1000);
-        }
-    });
 
     let mut last_time = std::time::Instant::now();
-    let mut show_log = true;
-    let mut show_browser = true;
+    let mut frame_count = 0u64;
 
     loop {
         let now = std::time::Instant::now();
         let delta = now - last_time;
         last_time = now;
         let delta_s = delta.as_secs_f64();
+        frame_count += 1;
 
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
 
-        let emu = emu.lock().unwrap();
-        use thumb_arm::emu_get_pc;
-        let pc = emu_get_pc(emu.0);
-        drop(emu);
-
         let ui = imgui.new_frame();
-
-        ui.main_menu_bar(|| {
-            ui.menu("View", || {
-                ui.checkbox("Log Viewer", &mut show_log);
-                ui.checkbox("File Browser", &mut show_browser);
-            });
-        });
-
-        ui.window("🎮 Emulator Info")
-            .size([300.0, 200.0], imgui::Condition::FirstUseEver)
+        ui.window("Diagnostic Test")
+            .size([400.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.text(format!("PC: 0x{:08X}", pc));
-                ui.separator();
-                if ui.button("⏸️ Pause") {
-                    log_viewer.add("⏸️ Pause clicked".to_string());
-                }
-                ui.same_line();
-                if ui.button("▶️ Resume") {
-                    log_viewer.add("▶️ Resume clicked".to_string());
+                ui.text(format!("Frame: {}", frame_count));
+                if ui.button("Click me") {
+                    log::info!("Button clicked");
                 }
             });
-
-        if show_log {
-            log_viewer.draw(&ui);
-        }
-
-        if show_browser {
-            file_browser.draw(&ui, &mut |selected_path| {
-                log_viewer.add(format!("🖱️ Selected: {}", selected_path));
-            });
-        }
 
         unsafe {
-            gl.clear_color(0.1, 0.1, 0.1, 1.0);
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
         }
 
