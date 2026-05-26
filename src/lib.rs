@@ -21,15 +21,11 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Diagnostic Test (with Touch Support) ===");
+    log::info!("=== Verso UI (with Touch Support) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
-        // ✅ إنهاء أي حدث لمس فوراً لمنع ANR
-        app.poll_events(Some(std::time::Duration::from_millis(16)), |event| {
-            if let android_activity::PollEvent::Motion { .. } = event {
-                // يمكننا تجاهلها هنا أو معالجتها لاحقًا
-            }
+        app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
             window_ready.set(true);
         });
         if window_ready.get() {
@@ -97,31 +93,37 @@ fn android_main(app: AndroidApp) {
         let delta_s = delta.as_secs_f64();
         frame_count += 1;
 
-        // ✅ معالجة أحداث اللمس وتحويلها إلى ImGui
-        app.poll_events(Some(std::time::Duration::from_millis(1)), |event| {
+        // ✅ معالجة أحداث اللمس (الطريقة الصحيحة للإصدار 0.4.3)
+        use android_activity::input::{InputEvent, MotionAction};
+        use android_activity::InputStatus;
+        
+        app.input_events(|event| {
             match event {
-                android_activity::PollEvent::Motion { action, pointer_index, x, y, .. } => {
-                    let io = imgui.io_mut();
-                    // تحويل الإحداثيات إلى إحداثيات ImGui
-                    io.mouse_pos = [x as f32, y as f32];
-                    
-                    // تحديد حالة الضغط/الرفع
-                    match action {
-                        android_activity::MotionAction::Down => {
-                            io.mouse_down[0] = true;
-                            log::debug!("Touch down at ({}, {})", x, y);
+                InputEvent::MotionEvent(motion) => {
+                    let action = motion.action();
+                    if let Some(pointer) = motion.pointers().next() {
+                        let x = pointer.x() as f32;
+                        let y = pointer.y() as f32;
+                        
+                        let io = imgui.io_mut();
+                        io.mouse_pos = [x, y];
+                        
+                        match action {
+                            MotionAction::Down | MotionAction::PointerDown => {
+                                io.mouse_down[0] = true;
+                            }
+                            MotionAction::Up | MotionAction::PointerUp => {
+                                io.mouse_down[0] = false;
+                            }
+                            MotionAction::Move | MotionAction::HoverMove => {
+                                // تحريك فقط
+                            }
+                            _ => {}
                         }
-                        android_activity::MotionAction::Up => {
-                            io.mouse_down[0] = false;
-                            log::debug!("Touch up at ({}, {})", x, y);
-                        }
-                        android_activity::MotionAction::Move => {
-                            // تحريك فقط، لا تغيير في حالة الضغط
-                        }
-                        _ => {}
                     }
+                    InputStatus::Handled
                 }
-                _ => {}
+                _ => InputStatus::Unhandled,
             }
         });
 
@@ -129,14 +131,13 @@ fn android_main(app: AndroidApp) {
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
 
         let ui = imgui.new_frame();
-        ui.window("Diagnostic Test")
+        ui.window("VERSO-UI")
             .size([400.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
                 ui.text(format!("Frame: {}", frame_count));
-                ui.text(format!("Touch: ({:.0}, {:.0})", io.mouse_pos[0], io.mouse_pos[1]));
                 if ui.button("Click me") {
-                    log::info!("✅ Button clicked!");
+                    log::info!("Button clicked!");
                 }
             });
 
@@ -149,5 +150,8 @@ fn android_main(app: AndroidApp) {
         renderer.render(&gl, &mut texture_map, draw_data).expect("ImGui render");
 
         egl.swap_buffers(display, surface).expect("swap_buffers");
+        
+        // معالجة أحداث دورة الحياة
+        app.poll_events(Some(std::time::Duration::from_millis(0)), |_| {});
     }
 }
