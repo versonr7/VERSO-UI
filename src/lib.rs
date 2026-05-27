@@ -1,6 +1,6 @@
+mod audio;
+
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-use std::io::Read;
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -13,89 +13,6 @@ use std::cell::Cell;
 #[link(name = "GLESv2")]
 extern "C" {}
 
-pub struct EmuHandle(*mut std::ffi::c_void);
-unsafe impl Send for EmuHandle {}
-unsafe impl Sync for EmuHandle {}
-
-/// تحاول استخراج libandengine.so من ملفات APK في مجلد التحميلات
-fn try_load_from_apk() -> Option<Vec<u8>> {
-    let download_dir = "/storage/emulated/0/Download";
-    if let Ok(entries) = std::fs::read_dir(download_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().map(|e| e == "apk").unwrap_or(false) {
-                if let Ok(apk_file) = std::fs::File::open(&path) {
-                    let mut archive = match zip::ZipArchive::new(apk_file) {
-                        Ok(a) => a,
-                        Err(_) => continue,
-                    };
-                    // محاولة العثور على libandengine.so داخل الـ APK
-                    for i in 0..archive.len() {
-                        if let Ok(mut file) = archive.by_index(i) {
-                            if file.name().contains("libandengine.so") {
-                                let mut data = Vec::new();
-                                if file.read_to_end(&mut data).is_ok() && !data.is_empty() {
-                                    log::info!("Extracted libandengine.so from APK: {}", path.display());
-                                    return Some(data);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "android")]
-fn load_game(emu: &EmuHandle) -> bool {
-    // 1. محاولة التحميل من ملفات APK في التحميلات
-    if let Some(data) = try_load_from_apk() {
-        use thumb_arm::{emu_load_elf, emu_init_android};
-        let entry = emu_load_elf(emu.0, data.as_ptr(), data.len() as u32);
-        if entry > 0 {
-            log::info!("Game loaded from APK, entry: 0x{:08X}", entry);
-            emu_init_android(emu.0);
-            return true;
-        }
-    }
-
-    // 2. محاولة التحميل من أصول التطبيق (assets)
-    // (سيتم استدعاء هذه الدالة من android_main حيث يمكننا الوصول إلى AssetManager)
-    false
-}
-
-#[cfg(target_os = "android")]
-fn load_game_from_assets(app: &AndroidApp, emu: &EmuHandle) -> bool {
-    // أولاً نجرب APK
-    if load_game(emu) {
-        return true;
-    }
-    
-    // ثم نجرب assets
-    let asset_manager = app.asset_manager();
-    let filename = std::ffi::CString::new("libandengine.so").expect("CString failed");
-    
-    match asset_manager.open(&filename) {
-        Some(mut asset) => {
-            let mut elf_data = Vec::new();
-            if asset.read_to_end(&mut elf_data).is_ok() && !elf_data.is_empty() {
-                log::info!("Loaded libandengine.so ({} bytes) from assets", elf_data.len());
-                use thumb_arm::{emu_load_elf, emu_init_android};
-                let entry = emu_load_elf(emu.0, elf_data.as_ptr(), elf_data.len() as u32);
-                if entry > 0 {
-                    log::info!("ELF entry: 0x{:08X}", entry);
-                    emu_init_android(emu.0);
-                    return true;
-                }
-            }
-            false
-        }
-        None => false,
-    }
-}
-
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: AndroidApp) {
@@ -104,33 +21,18 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Verso UI + Flappy Bird ===");
+    log::info!("=== VERSO-UI + quad-snd ===");
 
-    use thumb_arm::emu_create;
-    let emu = EmuHandle(emu_create());
-    log::info!("Emulator created");
+    // 1. تهيئة الصوت
+    let audio_player = audio::AudioPlayer::new() {
+        }
+        None => {
+            log::error!("❌ فشل تهيئة الصوت: {}", e);
+            None
+        }
+    };
 
-    let game_loaded = load_game_from_assets(&app, &emu);
-    if game_loaded {
-        log::info!("Flappy Bird loaded successfully!");
-    } else {
-        log::warn!("Flappy Bird not found");
-    }
-
-    let emu = Arc::new(Mutex::new(emu));
-    let emu_clone = emu.clone();
-    
-    if game_loaded {
-        std::thread::spawn(move || {
-            loop {
-                let mut emu = emu_clone.lock().unwrap();
-                use thumb_arm::emu_step_batch;
-                emu_step_batch(emu.0, 10000);
-            }
-        });
-        log::info!("Emulator thread started");
-    }
-
+    // 2. انتظار النافذة وتهيئة EGL ...
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -142,6 +44,7 @@ fn android_main(app: AndroidApp) {
             }
         }
     };
+    log::info!("Window acquired");
 
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
@@ -203,9 +106,9 @@ fn android_main(app: AndroidApp) {
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
+        // جمع أحداث اللمس
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
-
         app.input_events(|event| {
             match event {
                 InputEvent::MotionEvent(motion) => {
@@ -229,46 +132,26 @@ fn android_main(app: AndroidApp) {
         io.add_mouse_pos_event(mouse_pos);
         io.mouse_down[0] = mouse_down;
 
-        let pc = if game_loaded {
-            let emu = emu.lock().unwrap();
-            use thumb_arm::emu_get_pc;
-            emu_get_pc(emu.0)
-        } else {
-            0
-        };
-
         let ui = imgui.new_frame();
         ui.window("🎮 VERSO-UI")
             .size([700.0 * scale_factor, 500.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.text(format!("Scale: {:.1}x", scale_factor));
-                ui.separator();
-                
-                if game_loaded {
-                    ui.text(format!("Game: ✅ Flappy Bird loaded"));
-                    ui.text(format!("PC: 0x{:08X}", pc));
-                } else {
-                    ui.text("Game: ❌ Not loaded");
-                    ui.text("Place an APK with libandengine.so in /Download");
+                ui.text("Audio: ✅ quad-snd ready");
+                if ui.button("🔊 Test Sound") {
+                    if let Some(ref a) = audio_player {
+                        // تشغيل أول ملف صوتي نجده
+                        if let Ok(entries) = std::fs::read_dir("assets/sounds") {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path.extension().map_or(false, |e| e == "ogg") {
+                                    let _ = a.play_file(&path);
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
-                
-                ui.separator();
-                
-                if ui.button("▶️ Run") {
-                    log::info!("Run button clicked");
-                }
-                ui.same_line();
-                if ui.button("⏸️ Pause") {
-                    log::info!("Pause button clicked");
-                }
-                ui.same_line();
-                if ui.button("⏹️ Stop") {
-                    log::info!("Stop button clicked");
-                }
-                
-                ui.separator();
-                ui.text("Status: Running...");
             });
 
         unsafe {
