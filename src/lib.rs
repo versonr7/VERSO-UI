@@ -1,7 +1,7 @@
 mod saf;
+mod file_browser;
 
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -26,17 +26,15 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== VERSO-UI + SAF File Picker ===");
+    log::info!("=== VERSO-UI + dear-file-browser ===");
 
     // ── حالة التطبيق ──
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
-    let found_games: Vec<(String, std::path::PathBuf, String)> = Vec::new();
-    let mut selected_game: Option<usize> = None;
-    let mut scanning = false;
-    let mut saf_pending = false;
+    let mut file_browser = file_browser::create_browser();
+    let mut show_browser = false;
 
-    // ── انتظار النافذة الأصلية ──
+    // ── انتظار النافذة ──
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -48,7 +46,6 @@ fn android_main(app: AndroidApp) {
             }
         }
     };
-    log::info!("Window acquired");
 
     // ── تهيئة EGL و OpenGL ──
     use khronos_egl as egl;
@@ -134,16 +131,6 @@ fn android_main(app: AndroidApp) {
             }
         });
 
-        // التحقق من وجود ملف تم اختياره عبر SAF
-        if saf_pending {
-            if let Some(uri) = saf::check_picked_file() {
-                log::info!("Processing picked file: {}", uri);
-                saf::clear_picked_file();
-                saf_pending = false;
-                // TODO: قراءة الملف من URI (يحتاج إلى ContentResolver)
-            }
-        }
-
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
         io.add_mouse_pos_event(mouse_pos);
@@ -171,58 +158,34 @@ fn android_main(app: AndroidApp) {
                 }
                 ui.separator();
 
-                // ── زر فتح متصفح ملفات النظام ──
-                if ui.button("📂 Pick File (SAF)") {
-                    log::info!("Opening SAF file picker...");
-                    saf::open_file_picker(&app);
-                    saf_pending = true;
-                }
-                ui.same_line();
-                if ui.button("🔍 Scan Downloads") && !scanning {
-                    scanning = true;
-                    let games_clone = Arc::new(Mutex::new(Vec::new()));
-                    let games_ref = games_clone.clone();
-                    std::thread::spawn(move || {
-                        let games = saf::scan_for_games();
-                        if let Ok(mut guard) = games_ref.lock() {
-                            *guard = games;
-                        }
-                    });
-                    // في إطار لاحق سنقرأ النتائج
+                // ── زر فتح متصفح الملفات ──
+                if ui.button("📂 Browse for Game...") {
+                    show_browser = true;
                 }
 
-                // ── عرض قائمة الملفات الممسوحة ──
-                if !found_games.is_empty() {
-                    ui.separator();
-                    ui.text(format!("Found {} file(s):", found_games.len()));
-                    for (i, (name, _path, ext)) in found_games.iter().enumerate() {
-                        let label = format!("{} (.{})", name, ext);
-                        if ui.selectable_config(&label).build() {
-                            selected_game = Some(i);
-                        }
-                    }
-                    if let Some(idx) = selected_game {
-                        ui.separator();
-                        if ui.button("▶️ Load Selected") {
-                            let (_, path, ext) = &found_games[idx];
-                            let data = if ext == "apk" {
-                                saf::extract_from_apk(path)
-                            } else {
-                                saf::load_so_file(path)
-                            };
-                            if let Some(data) = data {
-                                use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
-                                let h = EmuHandle(emu_create());
-                                let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
-                                if entry > 0 {
-                                    log::info!("Game loaded! Entry: 0x{:08X}", entry);
-                                    emu_init_android(h.0);
-                                    emu = Some(h);
-                                    game_loaded = true;
+                // ── متصفح الملفات ──
+                if show_browser {
+                    let mut open = show_browser;
+                    ui.window("📂 Select Game File")
+                        .size([600.0 * scale_factor, 500.0 * scale_factor], imgui::Condition::FirstUseEver)
+                        .opened(&mut open)
+                        .build(|| {
+                            file_browser.draw(&ui, |path| {
+                                log::info!("Selected: {}", path.display());
+                                if let Some(data) = saf::load_game(&path) {
+                                    use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
+                                    let h = EmuHandle(emu_create());
+                                    let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
+                                    if entry > 0 {
+                                        log::info!("Game loaded! Entry: 0x{:08X}", entry);
+                                        emu_init_android(h.0);
+                                        emu = Some(h);
+                                        game_loaded = true;
+                                    }
                                 }
-                            }
-                        }
-                    }
+                            });
+                        });
+                    show_browser = open;
                 }
             });
 
