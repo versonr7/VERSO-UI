@@ -1,5 +1,4 @@
 mod saf;
-mod file_browser;
 
 use std::rc::Rc;
 
@@ -26,15 +25,13 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== VERSO-UI + dear-file-browser ===");
+    log::info!("=== VERSO-UI + built-in file browser ===");
 
-    // ── حالة التطبيق ──
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
-    let mut file_browser = file_browser::create_browser();
-    let mut show_browser = false;
+    let mut games: Vec<saf::FoundGame> = Vec::new();
+    let mut selected: Option<usize> = None;
 
-    // ── انتظار النافذة ──
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -47,7 +44,6 @@ fn android_main(app: AndroidApp) {
         }
     };
 
-    // ── تهيئة EGL و OpenGL ──
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -82,7 +78,6 @@ fn android_main(app: AndroidApp) {
     let screen_width = native_window.width() as f32;
     let screen_height = native_window.height() as f32;
 
-    // ── تهيئة ImGui ──
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
@@ -103,14 +98,12 @@ fn android_main(app: AndroidApp) {
     let mut mouse_pos: [f32; 2] = [0.0; 2];
     let mut mouse_down = false;
 
-    // ── الحلقة الرئيسية ──
     loop {
         let now = std::time::Instant::now();
         let delta = now - last_time;
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // معالجة اللمس
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
         app.input_events(|event| {
@@ -136,16 +129,19 @@ fn android_main(app: AndroidApp) {
         io.add_mouse_pos_event(mouse_pos);
         io.mouse_down[0] = mouse_down;
 
-        let ui = imgui.new_frame();
+        if saf::is_scan_done() {
+            games = saf::take_games();
+            selected = None;
+            log::info!("Scan complete, found {} games", games.len());
+        }
 
-        // ── النافذة الرئيسية ──
+        let ui = imgui.new_frame();
         ui.window("🎮 VERSO-UI")
             .size([700.0 * scale_factor, 600.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
                 ui.separator();
 
-                // ── حالة اللعبة ──
                 if game_loaded {
                     ui.text("✅ Game loaded!");
                     if let Some(ref emu) = emu {
@@ -158,38 +154,42 @@ fn android_main(app: AndroidApp) {
                 }
                 ui.separator();
 
-                // ── زر فتح متصفح الملفات ──
-                if ui.button("📂 Browse for Game...") {
-                    show_browser = true;
+                if ui.button("🔍 Scan for Games") {
+                    saf::start_scan();
+                }
+                if saf::is_scanning() {
+                    ui.text("Scanning...");
                 }
 
-                // ── متصفح الملفات ──
-                if show_browser {
-                    let mut open = show_browser;
-                    ui.window("📂 Select Game File")
-                        .size([600.0 * scale_factor, 500.0 * scale_factor], imgui::Condition::FirstUseEver)
-                        .opened(&mut open)
-                        .build(|| {
-                            file_browser.draw(&ui, |path| {
-                                log::info!("Selected: {}", path.display());
-                                if let Some(data) = saf::load_game(&path) {
-                                    use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
-                                    let h = EmuHandle(emu_create());
-                                    let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
-                                    if entry > 0 {
-                                        log::info!("Game loaded! Entry: 0x{:08X}", entry);
-                                        emu_init_android(h.0);
-                                        emu = Some(h);
-                                        game_loaded = true;
-                                    }
+                if !games.is_empty() {
+                    ui.separator();
+                    ui.text(format!("Found {} game(s):", games.len()));
+                    for (i, g) in games.iter().enumerate() {
+                        let label = format!("{} ({})", g.name, g.source);
+                        if ui.selectable_config(&label).build() {
+                            selected = Some(i);
+                        }
+                    }
+                    if let Some(idx) = selected {
+                        ui.separator();
+                        if ui.button("▶️ Load Selected") {
+                            let path = games[idx].path.clone();
+                            if let Some(data) = saf::load_game(&path) {
+                                use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
+                                let h = EmuHandle(emu_create());
+                                let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
+                                if entry > 0 {
+                                    log::info!("Game loaded! Entry: 0x{:08X}", entry);
+                                    emu_init_android(h.0);
+                                    emu = Some(h);
+                                    game_loaded = true;
                                 }
-                            });
-                        });
-                    show_browser = open;
+                            }
+                        }
+                    }
                 }
             });
 
-        // رسم
         unsafe {
             gl.clear_color(0.1, 0.1, 0.1, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
