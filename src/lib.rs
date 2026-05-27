@@ -31,7 +31,7 @@ fn android_main(app: AndroidApp) {
     // ── حالة التطبيق ──
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
-    let mut found_games: Vec<(String, std::path::PathBuf, String)> = Vec::new();
+    let found_games: Vec<(String, std::path::PathBuf, String)> = Vec::new();
     let mut selected_game: Option<usize> = None;
     let mut scanning = false;
     let mut saf_pending = false;
@@ -195,7 +195,7 @@ fn android_main(app: AndroidApp) {
                 if !found_games.is_empty() {
                     ui.separator();
                     ui.text(format!("Found {} file(s):", found_games.len()));
-                    for (i, (name, path, ext)) in found_games.iter().enumerate() {
+                    for (i, (name, _path, ext)) in found_games.iter().enumerate() {
                         let label = format!("{} (.{})", name, ext);
                         if ui.selectable_config(&label).build() {
                             selected_game = Some(i);
