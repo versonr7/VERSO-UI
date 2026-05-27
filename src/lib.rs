@@ -161,6 +161,16 @@ fn android_main(app: AndroidApp) {
                     ui.text("Scanning...");
                 }
 
+                // عرض سجل المسح
+                let scan_log = saf::get_scan_log();
+                if !scan_log.is_empty() {
+                    ui.separator();
+                    ui.text("Scan log:");
+                    for line in scan_log.iter().rev().take(10) {
+                        ui.text(line);
+                    }
+                }
+
                 if !games.is_empty() {
                     ui.separator();
                     ui.text(format!("Found {} game(s):", games.len()));

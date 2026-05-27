@@ -11,14 +11,15 @@ pub struct FoundGame {
 static GAMES: Mutex<Vec<FoundGame>> = Mutex::new(vec![]);
 static SCANNING: Mutex<bool> = Mutex::new(false);
 static SCAN_DONE: Mutex<bool> = Mutex::new(false);
+static SCAN_LOG: Mutex<Vec<String>> = Mutex::new(vec![]);
 
-/// بدء عملية المسح في خيط منفصل
 pub fn start_scan() {
     if *SCANNING.lock().unwrap() {
         return;
     }
     *SCANNING.lock().unwrap() = true;
     *SCAN_DONE.lock().unwrap() = false;
+    SCAN_LOG.lock().unwrap().clear();
 
     std::thread::spawn(|| {
         let games = scan_games();
@@ -33,7 +34,13 @@ pub fn is_scanning() -> bool {
 }
 
 pub fn is_scan_done() -> bool {
-    *SCAN_DONE.lock().unwrap()
+    let mut done = SCAN_DONE.lock().unwrap();
+    if *done {
+        *done = false;
+        true
+    } else {
+        false
+    }
 }
 
 pub fn take_games() -> Vec<FoundGame> {
@@ -41,43 +48,72 @@ pub fn take_games() -> Vec<FoundGame> {
     std::mem::take(&mut *guard)
 }
 
+pub fn get_scan_log() -> Vec<String> {
+    SCAN_LOG.lock().unwrap().clone()
+}
+
 fn scan_games() -> Vec<FoundGame> {
     let mut games = Vec::new();
     let dirs = ["/storage/emulated/0/Download", "/storage/emulated/0", "/sdcard/Download"];
+    
     for dir in &dirs {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if ext.eq_ignore_ascii_case("apk") {
-                        // فحص داخل APK
-                        if let Ok(file) = std::fs::File::open(&path) {
-                            if let Ok(mut archive) = zip::ZipArchive::new(file) {
-                                for i in 0..archive.len() {
-                                    if let Ok(mut f) = archive.by_index(i) {
-                                        if f.name().contains("libandengine.so") {
-                                            games.push(FoundGame {
-                                                name: path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
-                                                path: path.clone(),
-                                                source: "apk".into(),
-                                            });
-                                            break;
+        SCAN_LOG.lock().unwrap().push(format!("فحص: {}", dir));
+        match std::fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if ext.eq_ignore_ascii_case("apk") {
+                            SCAN_LOG.lock().unwrap().push(format!("  وجد APK: {}", path.display()));
+                            match std::fs::File::open(&path) {
+                                Ok(file) => {
+                                    match zip::ZipArchive::new(file) {
+                                        Ok(mut archive) => {
+                                            let mut found = false;
+                                            for i in 0..archive.len() {
+                                                if let Ok(mut f) = archive.by_index(i) {
+                                                    if f.name().contains("libandengine.so") {
+                                                        games.push(FoundGame {
+                                                            name: path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
+                                                            path: path.clone(),
+                                                            source: "apk".into(),
+                                                        });
+                                                        SCAN_LOG.lock().unwrap().push(format!("    ✅ يحتوي على libandengine.so"));
+                                                        found = true;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            if !found {
+                                                SCAN_LOG.lock().unwrap().push(format!("    ❌ لا يحتوي على libandengine.so"));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            SCAN_LOG.lock().unwrap().push(format!("    ❌ فشل فتح ZIP: {}", e));
                                         }
                                     }
                                 }
+                                Err(e) => {
+                                    SCAN_LOG.lock().unwrap().push(format!("    ❌ فشل فتح الملف: {}", e));
+                                }
                             }
+                        } else if ext.eq_ignore_ascii_case("so") {
+                            SCAN_LOG.lock().unwrap().push(format!("  وجد SO: {}", path.display()));
+                            games.push(FoundGame {
+                                name: path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
+                                path: path.clone(),
+                                source: "so".into(),
+                            });
                         }
-                    } else if ext.eq_ignore_ascii_case("so") {
-                        games.push(FoundGame {
-                            name: path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
-                            path: path.clone(),
-                            source: "so".into(),
-                        });
                     }
                 }
             }
+            Err(e) => {
+                SCAN_LOG.lock().unwrap().push(format!("  ❌ فشل: {}", e));
+            }
         }
     }
+    SCAN_LOG.lock().unwrap().push(format!("✅ اكتمل: وجد {} لعبة", games.len()));
     games
 }
 
