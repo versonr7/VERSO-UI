@@ -26,15 +26,15 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== VERSO-UI + Game Scanner ===");
+    log::info!("=== VERSO-UI + SAF File Picker ===");
 
     // ── حالة التطبيق ──
-    let found_games: Arc<Mutex<Vec<saf::FoundGame>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut selected_game: Option<usize> = None;
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
+    let mut found_games: Vec<(String, std::path::PathBuf, String)> = Vec::new();
+    let mut selected_game: Option<usize> = None;
     let mut scanning = false;
-    let mut scan_result = String::new();
+    let mut saf_pending = false;
 
     // ── انتظار النافذة الأصلية ──
     let window_ready = Cell::new(false);
@@ -134,6 +134,16 @@ fn android_main(app: AndroidApp) {
             }
         });
 
+        // التحقق من وجود ملف تم اختياره عبر SAF
+        if saf_pending {
+            if let Some(uri) = saf::check_picked_file() {
+                log::info!("Processing picked file: {}", uri);
+                saf::clear_picked_file();
+                saf_pending = false;
+                // TODO: قراءة الملف من URI (يحتاج إلى ContentResolver)
+            }
+        }
+
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
         io.add_mouse_pos_event(mouse_pos);
@@ -161,71 +171,54 @@ fn android_main(app: AndroidApp) {
                 }
                 ui.separator();
 
-                // ── زر فحص الملفات (في خيط منفصل) ──
-                if ui.button("🔍 Scan for Games") && !scanning {
+                // ── زر فتح متصفح ملفات النظام ──
+                if ui.button("📂 Pick File (SAF)") {
+                    log::info!("Opening SAF file picker...");
+                    saf::open_file_picker(&app);
+                    saf_pending = true;
+                }
+                ui.same_line();
+                if ui.button("🔍 Scan Downloads") && !scanning {
                     scanning = true;
-                    scan_result = "Scanning...".to_string();
-                    let found_games_clone = found_games.clone();
+                    let games_clone = Arc::new(Mutex::new(Vec::new()));
+                    let games_ref = games_clone.clone();
                     std::thread::spawn(move || {
                         let games = saf::scan_for_games();
-                        if let Ok(mut guard) = found_games_clone.lock() {
+                        if let Ok(mut guard) = games_ref.lock() {
                             *guard = games;
                         }
                     });
+                    // في إطار لاحق سنقرأ النتائج
                 }
-                ui.same_line();
-                if scanning {
-                    ui.text("🔄 Scanning...");
-                    // التحقق من اكتمال المسح
-                    if let Ok(guard) = found_games.lock() {
-                        let count = guard.len();
-                        // لا يمكننا تعديل scanning هنا لأن ui مقترض بشكل غير قابل للتغيير
-                        if !guard.is_empty() || scan_result != "Scanning..." {
-                            // سنتعامل مع هذا في إطار آخر
+
+                // ── عرض قائمة الملفات الممسوحة ──
+                if !found_games.is_empty() {
+                    ui.separator();
+                    ui.text(format!("Found {} file(s):", found_games.len()));
+                    for (i, (name, path, ext)) in found_games.iter().enumerate() {
+                        let label = format!("{} (.{})", name, ext);
+                        if ui.selectable_config(&label).build() {
+                            selected_game = Some(i);
                         }
                     }
-                }
-                ui.same_line();
-                if ui.button("🔄 Rescan") && !scanning {
-                    scanning = true;
-                    scan_result = "Scanning...".to_string();
-                    let found_games_clone = found_games.clone();
-                    std::thread::spawn(move || {
-                        let games = saf::scan_for_games();
-                        if let Ok(mut guard) = found_games_clone.lock() {
-                            *guard = games;
-                        }
-                    });
-                }
-
-                // ── عرض قائمة الألعاب ──
-                if let Ok(guard) = found_games.lock() {
-                    if !guard.is_empty() {
+                    if let Some(idx) = selected_game {
                         ui.separator();
-                        ui.text(format!("Found {} game(s):", guard.len()));
-                        
-                        for (i, game) in guard.iter().enumerate() {
-                            let label = format!("{} ({})", game.name, game.source);
-                            if ui.selectable_config(&label).build() {
-                                selected_game = Some(i);
-                            }
-                        }
-
-                        if let Some(idx) = selected_game {
-                            ui.separator();
-                            ui.text(format!("Selected: {}", guard[idx].name));
-                            if ui.button("▶️ Load Game") {
-                                let path = guard[idx].path.clone();
-                                if let Some(data) = saf::load_game(&path) {
-                                    use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
-                                    let h = EmuHandle(emu_create());
-                                    let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
-                                    if entry > 0 {
-                                        log::info!("Game loaded! Entry: 0x{:08X}", entry);
-                                        emu_init_android(h.0);
-                                        emu = Some(h);
-                                        game_loaded = true;
-                                    }
+                        if ui.button("▶️ Load Selected") {
+                            let (_, path, ext) = &found_games[idx];
+                            let data = if ext == "apk" {
+                                saf::extract_from_apk(path)
+                            } else {
+                                saf::load_so_file(path)
+                            };
+                            if let Some(data) = data {
+                                use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
+                                let h = EmuHandle(emu_create());
+                                let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
+                                if entry > 0 {
+                                    log::info!("Game loaded! Entry: 0x{:08X}", entry);
+                                    emu_init_android(h.0);
+                                    emu = Some(h);
+                                    game_loaded = true;
                                 }
                             }
                         }
