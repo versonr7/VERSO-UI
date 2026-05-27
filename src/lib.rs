@@ -25,13 +25,14 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== VERSO-UI + built-in file browser ===");
+    log::info!("=== VERSO-UI + File Scanner ===");
 
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
     let mut games: Vec<saf::FoundGame> = Vec::new();
     let mut selected: Option<usize> = None;
 
+    // انتظار النافذة
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -44,6 +45,7 @@ fn android_main(app: AndroidApp) {
         }
     };
 
+    // تهيئة EGL
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -78,6 +80,7 @@ fn android_main(app: AndroidApp) {
     let screen_width = native_window.width() as f32;
     let screen_height = native_window.height() as f32;
 
+    // تهيئة ImGui
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
@@ -104,6 +107,7 @@ fn android_main(app: AndroidApp) {
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
+        // أحداث اللمس
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
         app.input_events(|event| {
@@ -129,6 +133,7 @@ fn android_main(app: AndroidApp) {
         io.add_mouse_pos_event(mouse_pos);
         io.mouse_down[0] = mouse_down;
 
+        // التحقق من اكتمال الفحص
         if saf::is_scan_done() {
             games = saf::take_games();
             selected = None;
@@ -154,6 +159,7 @@ fn android_main(app: AndroidApp) {
                 }
                 ui.separator();
 
+                // زر الفحص
                 if ui.button("🔍 Scan for Games") {
                     saf::start_scan();
                 }
@@ -161,7 +167,7 @@ fn android_main(app: AndroidApp) {
                     ui.text("Scanning...");
                 }
 
-                // عرض سجل المسح
+                // عرض سجل الفحص
                 let scan_log = saf::get_scan_log();
                 if !scan_log.is_empty() {
                     ui.separator();
@@ -171,6 +177,7 @@ fn android_main(app: AndroidApp) {
                     }
                 }
 
+                // عرض الألعاب التي تم العثور عليها
                 if !games.is_empty() {
                     ui.separator();
                     ui.text(format!("Found {} game(s):", games.len()));
@@ -200,6 +207,7 @@ fn android_main(app: AndroidApp) {
                 }
             });
 
+        // رسم
         unsafe {
             gl.clear_color(0.1, 0.1, 0.1, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
