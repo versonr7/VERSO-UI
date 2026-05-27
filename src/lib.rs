@@ -86,6 +86,8 @@ fn android_main(app: AndroidApp) {
     // متغيرات لتخزين حالة اللمس
     let mut mouse_pos = [0.0f32, 0.0f32];
     let mut mouse_down = false;
+    // 🎯 طابور لتأخير حدث UP إطارًا واحدًا (حل مشكلة النقر)
+    let mut pending_up = false;
 
     let mut last_time = std::time::Instant::now();
 
@@ -95,7 +97,7 @@ fn android_main(app: AndroidApp) {
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // ✅ الخطوة 1: جمع أحداث اللمس (مع دعم KeyEvent لتقسيم الشاشة)
+        // ✅ الخطوة 1: جمع أحداث اللمس ولوحة المفاتيح
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
 
@@ -107,11 +109,12 @@ fn android_main(app: AndroidApp) {
                         match motion.action() {
                             MotionAction::Down | MotionAction::PointerDown => {
                                 mouse_down = true;
+                                pending_up = false; // إلغاء أي تأخير سابق
                                 log::debug!("Touch DOWN at ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]);
                             }
                             MotionAction::Up | MotionAction::PointerUp => {
-                                // 🎯 رفع mouse_down بعد إطار واحد لضمان معالجته
-                                mouse_down = false;
+                                // 🎯 تأخير حدث UP للإطار التالي (حل مشكلة النقر)
+                                pending_up = true;
                                 log::debug!("Touch UP at ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]);
                             }
                             _ => {}
@@ -121,19 +124,25 @@ fn android_main(app: AndroidApp) {
                 }
                 // ✅ إصلاح تقسيم الشاشة: معالجة KeyEvent
                 InputEvent::KeyEvent(_) => {
-                    InputStatus::Handled // منع ANR عند تقسيم الشاشة
+                    InputStatus::Handled
                 }
                 _ => InputStatus::Unhandled,
             }
         });
 
-        // ✅ الخطوة 2: تحديث ImGui IO بالإدخال المجمع
+        // ✅ الخطوة 2: تطبيق التأخير - رفع mouse_down بعد أن يعالج ImGui الإطار
+        if pending_up {
+            mouse_down = false;
+            pending_up = false;
+        }
+
+        // ✅ الخطوة 3: تحديث ImGui IO
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
         io.mouse_pos = mouse_pos;
         io.mouse_down[0] = mouse_down;
 
-        // ✅ الخطوة 3: بناء واجهة المستخدم (تحدث كل إطار)
+        // ✅ الخطوة 4: بناء واجهة المستخدم
         let ui = imgui.new_frame();
         ui.window("VERSO-UI")
             .size([400.0, 200.0], imgui::Condition::FirstUseEver)
@@ -145,7 +154,7 @@ fn android_main(app: AndroidApp) {
                 }
             });
 
-        // ✅ الخطوة 4: رسم كل شيء
+        // ✅ الخطوة 5: رسم كل شيء
         unsafe {
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
