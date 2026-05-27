@@ -1,5 +1,6 @@
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::io::Read;
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -16,43 +17,68 @@ pub struct EmuHandle(*mut std::ffi::c_void);
 unsafe impl Send for EmuHandle {}
 unsafe impl Sync for EmuHandle {}
 
-#[cfg(target_os = "android")]
-fn find_and_load_game(emu: &EmuHandle) -> bool {
-    // search in multiple locations
-    let paths = [
-        // assets (Android)
-        "/assets/libandengine.so",
-        // internal storage
-        "/storage/emulated/0/Download/libandengine.so",
-        // termux home
-        "/data/data/com.termux/files/home/flappy_extracted/lib/armeabi-v7a/libandengine.so",
-        // relative
-        "libandengine.so",
-    ];
-
-    for path in &paths {
-        if let Ok(data) = std::fs::read(path) {
-            log::info!("Found game at: {}", path);
-            use thumb_arm::{emu_load_elf, emu_init_android};
-            let entry = emu_load_elf(emu.0, data.as_ptr(), data.len() as u32);
-            if entry > 0 {
-                log::info!("ELF entry: 0x{:08X}", entry);
-                emu_init_android(emu.0);
-                return true;
+/// تحاول استخراج libandengine.so من ملفات APK في مجلد التحميلات
+fn try_load_from_apk() -> Option<Vec<u8>> {
+    let download_dir = "/storage/emulated/0/Download";
+    if let Ok(entries) = std::fs::read_dir(download_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "apk").unwrap_or(false) {
+                if let Ok(apk_file) = std::fs::File::open(&path) {
+                    let mut archive = match zip::ZipArchive::new(apk_file) {
+                        Ok(a) => a,
+                        Err(_) => continue,
+                    };
+                    // محاولة العثور على libandengine.so داخل الـ APK
+                    for i in 0..archive.len() {
+                        if let Ok(mut file) = archive.by_index(i) {
+                            if file.name().contains("libandengine.so") {
+                                let mut data = Vec::new();
+                                if file.read_to_end(&mut data).is_ok() && !data.is_empty() {
+                                    log::info!("Extracted libandengine.so from APK: {}", path.display());
+                                    return Some(data);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
+    None
+}
+
+#[cfg(target_os = "android")]
+fn load_game(emu: &EmuHandle) -> bool {
+    // 1. محاولة التحميل من ملفات APK في التحميلات
+    if let Some(data) = try_load_from_apk() {
+        use thumb_arm::{emu_load_elf, emu_init_android};
+        let entry = emu_load_elf(emu.0, data.as_ptr(), data.len() as u32);
+        if entry > 0 {
+            log::info!("Game loaded from APK, entry: 0x{:08X}", entry);
+            emu_init_android(emu.0);
+            return true;
+        }
+    }
+
+    // 2. محاولة التحميل من أصول التطبيق (assets)
+    // (سيتم استدعاء هذه الدالة من android_main حيث يمكننا الوصول إلى AssetManager)
     false
 }
 
 #[cfg(target_os = "android")]
 fn load_game_from_assets(app: &AndroidApp, emu: &EmuHandle) -> bool {
+    // أولاً نجرب APK
+    if load_game(emu) {
+        return true;
+    }
+    
+    // ثم نجرب assets
     let asset_manager = app.asset_manager();
     let filename = std::ffi::CString::new("libandengine.so").expect("CString failed");
     
     match asset_manager.open(&filename) {
         Some(mut asset) => {
-            use std::io::Read;
             let mut elf_data = Vec::new();
             if asset.read_to_end(&mut elf_data).is_ok() && !elf_data.is_empty() {
                 log::info!("Loaded libandengine.so ({} bytes) from assets", elf_data.len());
@@ -66,10 +92,7 @@ fn load_game_from_assets(app: &AndroidApp, emu: &EmuHandle) -> bool {
             }
             false
         }
-        None => {
-            // fallback to filesystem search
-            find_and_load_game(emu)
-        }
+        None => false,
     }
 }
 
@@ -158,7 +181,6 @@ fn android_main(app: AndroidApp) {
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
 
-    // scale factor for tablet/phone
     let scale_factor = 2.0;
     imgui.io_mut().font_global_scale = scale_factor;
     imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData { config: Some(imgui::FontConfig {
@@ -228,6 +250,7 @@ fn android_main(app: AndroidApp) {
                     ui.text(format!("PC: 0x{:08X}", pc));
                 } else {
                     ui.text("Game: ❌ Not loaded");
+                    ui.text("Place an APK with libandengine.so in /Download");
                 }
                 
                 ui.separator();
