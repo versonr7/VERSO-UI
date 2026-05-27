@@ -36,12 +36,12 @@ pub fn scan_for_games() -> Vec<FoundGame> {
                                                     .unwrap_or_default()
                                                     .to_string_lossy()
                                                     .to_string();
+                                                log::info!("🎮 لعبة مضافة: {}", name);
                                                 games.push(FoundGame {
                                                     path: path.clone(),
-                                                    name,
+                                                    name: name.clone(),
                                                     source: "apk".to_string(),
                                                 });
-                                                log::info!("🎮 لعبة مضافة: {}", name);
                                                 break;
                                             }
                                         }
@@ -55,12 +55,12 @@ pub fn scan_for_games() -> Vec<FoundGame> {
                                 .unwrap_or_default()
                                 .to_string_lossy()
                                 .to_string();
+                            log::info!("🎮 لعبة مضافة: {}", name);
                             games.push(FoundGame {
                                 path: path.clone(),
-                                name,
+                                name: name.clone(),
                                 source: "so".to_string(),
                             });
-                            log::info!("🎮 لعبة مضافة: {}", name);
                         }
                     }
                 }

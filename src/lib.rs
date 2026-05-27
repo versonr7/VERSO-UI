@@ -154,7 +154,7 @@ fn android_main(app: AndroidApp) {
                     log::info!("Loading from manual path: {}", path.display());
                     if let Some(data) = saf::load_game(&path) {
                         use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
-                        let mut h = EmuHandle(emu_create());
+                        let h = EmuHandle(emu_create());
                         let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
                         if entry > 0 {
                             log::info!("Game loaded! Entry: 0x{:08X}", entry);
@@ -212,7 +212,7 @@ fn android_main(app: AndroidApp) {
                             let path = found_games[idx].path.clone();
                             if let Some(data) = saf::load_game(&path) {
                                 use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
-                                let mut h = EmuHandle(emu_create());
+                                let h = EmuHandle(emu_create());
                                 let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
                                 if entry > 0 {
                                     log::info!("Game loaded! Entry: 0x{:08X}", entry);
