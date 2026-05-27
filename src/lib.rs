@@ -25,7 +25,7 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== VERSO-UI + File Scanner ===");
+    log::info!("=== VERSO-UI + Arabic Font ===");
 
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
@@ -80,17 +80,48 @@ fn android_main(app: AndroidApp) {
     let screen_width = native_window.width() as f32;
     let screen_height = native_window.height() as f32;
 
-    // تهيئة ImGui
+    // ── تهيئة ImGui مع الخط العربي ──
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
 
     let scale_factor = 2.0;
+
+    // ✍️ إضافة الخط العربي مع نطاق الأحرف العربية
+    if let Ok(arabic_font_data) = std::fs::read("assets/arabic.ttf") {
+        // نطاق الأحرف العربية: Arabic (0600-06FF) + Arabic Supplement (0750-077F) + Arabic Presentation Forms-A (FB50-FDFF) + Arabic Presentation Forms-B (FE70-FEFF)
+        static ARABIC_RANGES: &[u32] = &[
+            0x0020, 0x00FF, // Basic Latin + Latin Supplement (للأرقام والرموز)
+            0x0600, 0x06FF, // Arabic
+            0x0750, 0x077F, // Arabic Supplement
+            0xFB50, 0xFDFF, // Arabic Presentation Forms-A
+            0xFE70, 0xFEFF, // Arabic Presentation Forms-B
+            0,
+        ];
+        let arabic_glyph_ranges = unsafe {
+            imgui::FontGlyphRanges::from_slice_unchecked(ARABIC_RANGES)
+        };
+
+        imgui.fonts().add_font(&[imgui::FontSource::TtfData {
+            data: &arabic_font_data,
+            size_pixels: 24.0 * scale_factor,
+            config: Some(imgui::FontConfig {
+                glyph_ranges: arabic_glyph_ranges,
+                ..Default::default()
+            }),
+        }]);
+        log::info!("✅ Arabic font loaded");
+    } else {
+        log::warn!("⚠️ Arabic font not found at assets/arabic.ttf, using default font");
+        imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData {
+            config: Some(imgui::FontConfig {
+                size_pixels: 24.0 * scale_factor,
+                ..Default::default()
+            }),
+        }]);
+    }
+
     imgui.io_mut().font_global_scale = scale_factor;
-    imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData { config: Some(imgui::FontConfig {
-        size_pixels: 24.0 * scale_factor,
-        ..Default::default()
-    })}]);
 
     let mut texture_map: imgui_glow_renderer::SimpleTextureMap = Default::default();
     let mut renderer = imgui_glow_renderer::Renderer::initialize(
@@ -107,7 +138,6 @@ fn android_main(app: AndroidApp) {
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // أحداث اللمس
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
         app.input_events(|event| {
@@ -133,7 +163,6 @@ fn android_main(app: AndroidApp) {
         io.add_mouse_pos_event(mouse_pos);
         io.mouse_down[0] = mouse_down;
 
-        // التحقق من اكتمال الفحص
         if saf::is_scan_done() {
             games = saf::take_games();
             selected = None;
@@ -159,28 +188,25 @@ fn android_main(app: AndroidApp) {
                 }
                 ui.separator();
 
-                // زر الفحص
-                if ui.button("🔍 Scan for Games") {
+                if ui.button("🔍 فحص الألعاب") {
                     saf::start_scan();
                 }
                 if saf::is_scanning() {
-                    ui.text("Scanning...");
+                    ui.text("جاري الفحص...");
                 }
 
-                // عرض سجل الفحص
                 let scan_log = saf::get_scan_log();
                 if !scan_log.is_empty() {
                     ui.separator();
-                    ui.text("Scan log:");
+                    ui.text("سجل الفحص:");
                     for line in scan_log.iter().rev().take(10) {
                         ui.text(line);
                     }
                 }
 
-                // عرض الألعاب التي تم العثور عليها
                 if !games.is_empty() {
                     ui.separator();
-                    ui.text(format!("Found {} game(s):", games.len()));
+                    ui.text(format!("تم العثور على {} لعبة:", games.len()));
                     for (i, g) in games.iter().enumerate() {
                         let label = format!("{} ({})", g.name, g.source);
                         if ui.selectable_config(&label).build() {
@@ -189,7 +215,7 @@ fn android_main(app: AndroidApp) {
                     }
                     if let Some(idx) = selected {
                         ui.separator();
-                        if ui.button("▶️ Load Selected") {
+                        if ui.button("▶️ تشغيل") {
                             let path = games[idx].path.clone();
                             if let Some(data) = saf::load_game(&path) {
                                 use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
@@ -207,7 +233,6 @@ fn android_main(app: AndroidApp) {
                 }
             });
 
-        // رسم
         unsafe {
             gl.clear_color(0.1, 0.1, 0.1, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
