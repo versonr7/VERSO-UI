@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ndk_context = "0.1"
+ndk-context = "0.1"
 bytemuck = "1"
 thumb-arm = { git = "https://github.com/versonr7/Thumb-ARM", package = "thumb-arm" }
 android-activity = { version = "0.4.3", features = ["native-activity"] }
