@@ -32,7 +32,6 @@ fn android_main(app: AndroidApp) {
     let mut selected_game: Option<usize> = None;
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
-    let mut manual_path = String::new();
 
     // ── انتظار النافذة الأصلية ──
     let window_ready = Cell::new(false);
@@ -144,29 +143,6 @@ fn android_main(app: AndroidApp) {
             .size([700.0 * scale_factor, 600.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.separator();
-
-                // ── تحميل يدوي عبر المسار ──
-                ui.text("📂 Manual path:");
-                ui.input_text("##path", &mut manual_path).build();
-                if ui.button("Load from path") && !manual_path.is_empty() {
-                    let path = std::path::PathBuf::from(&manual_path);
-                    log::info!("Loading from manual path: {}", path.display());
-                    if let Some(data) = saf::load_game(&path) {
-                        use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
-                        let h = EmuHandle(emu_create());
-                        let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
-                        if entry > 0 {
-                            log::info!("Game loaded! Entry: 0x{:08X}", entry);
-                            emu_init_android(h.0);
-                            emu = Some(h);
-                            game_loaded = true;
-                        }
-                    } else {
-                        log::error!("Failed to load from path");
-                    }
-                }
-
                 ui.separator();
 
                 // ── حالة اللعبة ──

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+jni = "0.21"
 quad-snd = "0.2"
 zip = "0.6"
 bytemuck = "1"

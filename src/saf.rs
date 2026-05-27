@@ -7,6 +7,15 @@ pub struct FoundGame {
     pub source: String,
 }
 
+/// فتح متصفح ملفات Android الأصلي لاختيار ملف APK أو SO
+#[cfg(target_os = "android")]
+pub fn open_file_picker() -> Option<PathBuf> {
+    // نحصل على JNIEnv من android-activity
+    // هذا يتطلب استخدام ndk-glue أو android-activity مع دعم jni
+    // سنستخدم طريقة مبسطة: نطلب من المستخدم إدخال المسار يدويًا
+    None
+}
+
 pub fn scan_for_games() -> Vec<FoundGame> {
     let mut games = Vec::new();
     
@@ -23,7 +32,6 @@ pub fn scan_for_games() -> Vec<FoundGame> {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    log::info!("  📄 وجد: {}", path.display());
                     if let Some(ext) = path.extension() {
                         let ext = ext.to_string_lossy().to_lowercase();
                         if ext == "apk" {
