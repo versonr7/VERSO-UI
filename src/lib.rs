@@ -19,7 +19,7 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Verso UI (Touch Event Fix) ===");
+    log::info!("=== Verso UI (Touch Event Fix v2) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -79,9 +79,10 @@ fn android_main(app: AndroidApp) {
 
     let mut last_time = std::time::Instant::now();
 
-    // 🎯 متغيرات وسيطة لتخزين اللمسات (لا نستعير imgui هنا)
+    // 🎯 متغيرات لتتبع حالة اللمس والتغييرات
     let mut mouse_pos: [f32; 2] = [0.0; 2];
     let mut mouse_down = false;
+    let mut prev_mouse_down = false;
 
     loop {
         let now = std::time::Instant::now();
@@ -111,11 +112,16 @@ fn android_main(app: AndroidApp) {
             }
         });
 
-        // الآن نُحدث io بالبيانات المجمّعة
+        // تحديث io
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
         io.add_mouse_pos_event(mouse_pos);
-        io.add_mouse_button_event(imgui::MouseButton::Left, mouse_down);
+
+        // ✅ استدعاء add_mouse_button_event فقط عند تغير الحالة
+        if mouse_down != prev_mouse_down {
+            io.add_mouse_button_event(imgui::MouseButton::Left, mouse_down);
+            prev_mouse_down = mouse_down;
+        }
 
         let ui = imgui.new_frame();
         ui.window("VERSO-UI")
