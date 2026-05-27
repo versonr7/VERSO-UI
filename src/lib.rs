@@ -19,7 +19,7 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Verso UI (Final Fix) ===");
+    log::info!("=== Verso UI (Scaled for Tablet) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -72,6 +72,16 @@ fn android_main(app: AndroidApp) {
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
 
+    // 🎯 تكبير الواجهة لتناسب الشاشات الكبيرة (مثل Xiaomi Pad 6S Pro)
+    let scale_factor = (screen_width / 1000.0).max(1.0); // عرض 1000px كمرجع
+    imgui.io_mut().font_global_scale = scale_factor;
+    
+    // إضافة خط كبير وواضح
+    imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData { config: Some(imgui::FontConfig {
+        size_pixels: 24.0 * scale_factor,
+        ..Default::default()
+    })}]);
+
     let mut texture_map: imgui_glow_renderer::SimpleTextureMap = Default::default();
     let mut renderer = imgui_glow_renderer::Renderer::initialize(
         &gl, &mut imgui, &mut texture_map, false,
@@ -87,7 +97,6 @@ fn android_main(app: AndroidApp) {
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // جمع الأحداث
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
 
@@ -109,19 +118,23 @@ fn android_main(app: AndroidApp) {
             }
         });
 
-        // ✅ تحديث io مع ضبط mouse_down يدوياً
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
         io.add_mouse_pos_event(mouse_pos);
-        io.mouse_down[0] = mouse_down; // ← هذا السطر ضروري جداً
+        io.mouse_down[0] = mouse_down;
 
         let ui = imgui.new_frame();
+        
+        // نافذة أكبر مع زر أكبر
         ui.window("VERSO-UI")
-            .size([400.0, 200.0], imgui::Condition::FirstUseEver)
+            .size([600.0 * scale_factor, 400.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.text(format!("Mouse: ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]));
-                if ui.button("Click me") {
+                ui.text(format!("Scale: {:.1}x", scale_factor));
+                ui.separator();
+                
+                // زر كبير وواضح
+                if ui.button_config("Click me").size([300.0 * scale_factor, 80.0 * scale_factor]).build() {
                     log::info!("✅ Button clicked!");
                 }
             });
