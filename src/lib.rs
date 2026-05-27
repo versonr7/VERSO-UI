@@ -19,7 +19,7 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Verso UI (AddMouseButtonEvent fix) ===");
+    log::info!("=== Verso UI (Touch Event Fix) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -79,13 +79,17 @@ fn android_main(app: AndroidApp) {
 
     let mut last_time = std::time::Instant::now();
 
+    // 🎯 متغيرات وسيطة لتخزين اللمسات (لا نستعير imgui هنا)
+    let mut mouse_pos: [f32; 2] = [0.0; 2];
+    let mut mouse_down = false;
+
     loop {
         let now = std::time::Instant::now();
         let delta = now - last_time;
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // 🎯 معالجة اللمس باستخدام AddMouseButtonEvent (الطريقة الصحيحة)
+        // جمع الأحداث في متغيرات مؤقتة
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
 
@@ -93,40 +97,32 @@ fn android_main(app: AndroidApp) {
             match event {
                 InputEvent::MotionEvent(motion) => {
                     if let Some(pointer) = motion.pointers().next() {
-                        let x = pointer.x() as f32;
-                        let y = pointer.y() as f32;
-
+                        mouse_pos = [pointer.x() as f32, pointer.y() as f32];
                         match motion.action() {
-                            MotionAction::Down | MotionAction::PointerDown => {
-                                imgui.io_mut().add_mouse_pos_event(x, y);
-                                imgui.io_mut().add_mouse_button_event(imgui::MouseButton::Left, true);
-                            }
-                            MotionAction::Up | MotionAction::PointerUp => {
-                                imgui.io_mut().add_mouse_pos_event(x, y);
-                                imgui.io_mut().add_mouse_button_event(imgui::MouseButton::Left, false);
-                            }
-                            MotionAction::Move | MotionAction::HoverMove => {
-                                imgui.io_mut().add_mouse_pos_event(x, y);
-                            }
+                            MotionAction::Down | MotionAction::PointerDown => mouse_down = true,
+                            MotionAction::Up | MotionAction::PointerUp => mouse_down = false,
                             _ => {}
                         }
                     }
                     InputStatus::Handled
                 }
-                InputEvent::KeyEvent(_) => InputStatus::Handled, // منع ANR عند تقسيم الشاشة
+                InputEvent::KeyEvent(_) => InputStatus::Handled,
                 _ => InputStatus::Unhandled,
             }
         });
 
+        // الآن نُحدث io بالبيانات المجمّعة
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
+        io.add_mouse_pos_event(mouse_pos);
+        io.add_mouse_button_event(imgui::MouseButton::Left, mouse_down);
 
         let ui = imgui.new_frame();
         ui.window("VERSO-UI")
             .size([400.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.text(format!("Mouse: ({:.0}, {:.0})", io.mouse_pos[0], io.mouse_pos[1]));
+                ui.text(format!("Mouse: ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]));
                 if ui.button("Click me") {
                     log::info!("✅ Button clicked!");
                 }
