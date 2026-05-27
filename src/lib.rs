@@ -1,3 +1,5 @@
+mod saf;
+
 use std::rc::Rc;
 
 #[cfg(target_os = "android")]
@@ -11,6 +13,10 @@ use std::cell::Cell;
 #[link(name = "GLESv2")]
 extern "C" {}
 
+pub struct EmuHandle(*mut std::ffi::c_void);
+unsafe impl Send for EmuHandle {}
+unsafe impl Sync for EmuHandle {}
+
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: AndroidApp) {
@@ -19,9 +25,16 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== VERSO-UI (Stable Base) ===");
+    log::info!("=== VERSO-UI + Game Scanner ===");
 
-    // --- انتظار النافذة الأصلية ---
+    // ── حالة التطبيق ──
+    let mut found_games: Vec<saf::FoundGame> = Vec::new();
+    let mut selected_game: Option<usize> = None;
+    let mut game_loaded = false;
+    let mut emu: Option<EmuHandle> = None;
+    let mut scan_triggered = false;
+
+    // ── انتظار النافذة الأصلية ──
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -35,7 +48,7 @@ fn android_main(app: AndroidApp) {
     };
     log::info!("Window acquired");
 
-    // --- تهيئة EGL و OpenGL ---
+    // ── تهيئة EGL و OpenGL ──
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -70,7 +83,7 @@ fn android_main(app: AndroidApp) {
     let screen_width = native_window.width() as f32;
     let screen_height = native_window.height() as f32;
 
-    // --- تهيئة ImGui ---
+    // ── تهيئة ImGui ──
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
@@ -91,7 +104,7 @@ fn android_main(app: AndroidApp) {
     let mut mouse_pos: [f32; 2] = [0.0; 2];
     let mut mouse_down = false;
 
-    // --- الحلقة الرئيسية ---
+    // ── الحلقة الرئيسية ──
     loop {
         let now = std::time::Instant::now();
         let delta = now - last_time;
@@ -125,14 +138,73 @@ fn android_main(app: AndroidApp) {
         io.mouse_down[0] = mouse_down;
 
         let ui = imgui.new_frame();
+
+        // ── النافذة الرئيسية ──
         ui.window("🎮 VERSO-UI")
             .size([700.0 * scale_factor, 500.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.text("Status: Stable base ready.");
                 ui.separator();
-                if ui.button("📂 Load Game (SAF)") {
-                    log::info!("Load Game button clicked");
+
+                // ── حالة اللعبة ──
+                if game_loaded {
+                    ui.text("✅ Game loaded!");
+                    if let Some(ref emu) = emu {
+                        use thumb_arm::emu_get_pc;
+                        let pc = emu_get_pc(emu.0);
+                        ui.text(format!("PC: 0x{:08X}", pc));
+                    }
+                } else {
+                    ui.text("📂 No game loaded");
+                }
+                ui.separator();
+
+                // ── زر فحص الملفات ──
+                if ui.button("🔍 Scan for Games") {
+                    found_games = saf::scan_for_games();
+                    selected_game = None;
+                    log::info!("Found {} games", found_games.len());
+                }
+                ui.same_line();
+                if ui.button("🔄 Rescan") {
+                    found_games = saf::scan_for_games();
+                    selected_game = None;
+                }
+
+                // ── عرض قائمة الألعاب ──
+                if !found_games.is_empty() {
+                    ui.separator();
+                    ui.text(format!("Found {} game(s):", found_games.len()));
+                    
+                    for (i, game) in found_games.iter().enumerate() {
+                        let label = format!("{} ({})", game.name, game.source);
+                        if ui.selectable_config(&label).build() {
+                            selected_game = Some(i);
+                        }
+                    }
+
+                    // ── زر التحميل ──
+                    if let Some(idx) = selected_game {
+                        ui.separator();
+                        ui.text(format!("Selected: {}", found_games[idx].name));
+                        if ui.button("▶️ Load Game") {
+                            let path = found_games[idx].path.clone();
+                            log::info!("Loading game from: {}", path.display());
+                            if let Some(data) = saf::load_game(&path) {
+                                use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
+                                let mut h = EmuHandle(emu_create());
+                                let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
+                                if entry > 0 {
+                                    log::info!("Game loaded! Entry: 0x{:08X}", entry);
+                                    emu_init_android(h.0);
+                                    emu = Some(h);
+                                    game_loaded = true;
+                                }
+                            }
+                        }
+                    }
+                } else if !scan_triggered {
+                    ui.text("Press 'Scan for Games' to find APK/SO files.");
                 }
             });
 
