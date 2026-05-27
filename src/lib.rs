@@ -19,7 +19,7 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Verso UI (Scaled for Tablet) ===");
+    log::info!("=== Verso UI (Big Button) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -72,11 +72,10 @@ fn android_main(app: AndroidApp) {
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
 
-    // 🎯 تكبير الواجهة لتناسب الشاشات الكبيرة (مثل Xiaomi Pad 6S Pro)
-    let scale_factor = (screen_width / 1000.0).max(1.0); // عرض 1000px كمرجع
+    // تكبير الواجهة لتناسب الأجهزة اللوحية
+    let scale_factor = (screen_width / 1000.0).max(1.0);
     imgui.io_mut().font_global_scale = scale_factor;
-    
-    // إضافة خط كبير وواضح
+
     imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData { config: Some(imgui::FontConfig {
         size_pixels: 24.0 * scale_factor,
         ..Default::default()
@@ -124,17 +123,17 @@ fn android_main(app: AndroidApp) {
         io.mouse_down[0] = mouse_down;
 
         let ui = imgui.new_frame();
-        
-        // نافذة أكبر مع زر أكبر
+
+        // نافذة كبيرة لضمان زر كبير
         ui.window("VERSO-UI")
-            .size([600.0 * scale_factor, 400.0 * scale_factor], imgui::Condition::FirstUseEver)
+            .size([900.0 * scale_factor, 600.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
                 ui.text(format!("Scale: {:.1}x", scale_factor));
                 ui.separator();
-                
-                // زر كبير وواضح
-                if ui.button_config("Click me").size([300.0 * scale_factor, 80.0 * scale_factor]).build() {
+
+                // زر كبير الحجم (يملأ عرض النافذة تقريبًا)
+                if ui.button("Click me") {
                     log::info!("✅ Button clicked!");
                 }
             });
