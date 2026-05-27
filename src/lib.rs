@@ -32,7 +32,7 @@ fn android_main(app: AndroidApp) {
     let mut selected_game: Option<usize> = None;
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
-    let mut scan_triggered = false;
+    let mut manual_path = String::new();
 
     // ── انتظار النافذة الأصلية ──
     let window_ready = Cell::new(false);
@@ -141,9 +141,32 @@ fn android_main(app: AndroidApp) {
 
         // ── النافذة الرئيسية ──
         ui.window("🎮 VERSO-UI")
-            .size([700.0 * scale_factor, 500.0 * scale_factor], imgui::Condition::FirstUseEver)
+            .size([700.0 * scale_factor, 600.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
+                ui.separator();
+
+                // ── تحميل يدوي عبر المسار ──
+                ui.text("📂 Manual path:");
+                ui.input_text("##path", &mut manual_path).build();
+                if ui.button("Load from path") && !manual_path.is_empty() {
+                    let path = std::path::PathBuf::from(&manual_path);
+                    log::info!("Loading from manual path: {}", path.display());
+                    if let Some(data) = saf::load_game(&path) {
+                        use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
+                        let mut h = EmuHandle(emu_create());
+                        let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
+                        if entry > 0 {
+                            log::info!("Game loaded! Entry: 0x{:08X}", entry);
+                            emu_init_android(h.0);
+                            emu = Some(h);
+                            game_loaded = true;
+                        }
+                    } else {
+                        log::error!("Failed to load from path");
+                    }
+                }
+
                 ui.separator();
 
                 // ── حالة اللعبة ──
@@ -155,7 +178,7 @@ fn android_main(app: AndroidApp) {
                         ui.text(format!("PC: 0x{:08X}", pc));
                     }
                 } else {
-                    ui.text("📂 No game loaded");
+                    ui.text("❌ No game loaded");
                 }
                 ui.separator();
 
@@ -163,7 +186,6 @@ fn android_main(app: AndroidApp) {
                 if ui.button("🔍 Scan for Games") {
                     found_games = saf::scan_for_games();
                     selected_game = None;
-                    log::info!("Found {} games", found_games.len());
                 }
                 ui.same_line();
                 if ui.button("🔄 Rescan") {
@@ -183,13 +205,11 @@ fn android_main(app: AndroidApp) {
                         }
                     }
 
-                    // ── زر التحميل ──
                     if let Some(idx) = selected_game {
                         ui.separator();
                         ui.text(format!("Selected: {}", found_games[idx].name));
                         if ui.button("▶️ Load Game") {
                             let path = found_games[idx].path.clone();
-                            log::info!("Loading game from: {}", path.display());
                             if let Some(data) = saf::load_game(&path) {
                                 use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
                                 let mut h = EmuHandle(emu_create());
@@ -203,8 +223,6 @@ fn android_main(app: AndroidApp) {
                             }
                         }
                     }
-                } else if !scan_triggered {
-                    ui.text("Press 'Scan for Games' to find APK/SO files.");
                 }
             });
 

@@ -1,14 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::io::Read;
 
-/// نتيجة البحث عن الألعاب
 pub struct FoundGame {
     pub path: PathBuf,
     pub name: String,
     pub source: String,
 }
 
-/// البحث عن ملفات الألعاب في المسارات المعروفة
 pub fn scan_for_games() -> Vec<FoundGame> {
     let mut games = Vec::new();
     
@@ -17,16 +15,15 @@ pub fn scan_for_games() -> Vec<FoundGame> {
         "/storage/emulated/0",
         "/sdcard/Download",
         "/sdcard",
-        "/storage/emulated/0/Android/data",
     ];
     
     for dir in &search_dirs {
-        log::debug!("فحص المجلد: {}", dir);
+        log::info!("🔍 فحص المجلد: {}", dir);
         match std::fs::read_dir(dir) {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    log::debug!("  وجد: {}", path.display());
+                    log::info!("  📄 وجد: {}", path.display());
                     if let Some(ext) = path.extension() {
                         let ext = ext.to_string_lossy().to_lowercase();
                         if ext == "apk" {
@@ -44,6 +41,7 @@ pub fn scan_for_games() -> Vec<FoundGame> {
                                                     name,
                                                     source: "apk".to_string(),
                                                 });
+                                                log::info!("🎮 لعبة مضافة: {}", name);
                                                 break;
                                             }
                                         }
@@ -62,21 +60,21 @@ pub fn scan_for_games() -> Vec<FoundGame> {
                                 name,
                                 source: "so".to_string(),
                             });
+                            log::info!("🎮 لعبة مضافة: {}", name);
                         }
                     }
                 }
             }
             Err(e) => {
-                log::warn!("فشل فحص المجلد {}: {}", dir, e);
+                log::warn!("❌ فشل فحص المجلد {}: {}", dir, e);
             }
         }
     }
     
-    log::info!("تم العثور على {} لعبة", games.len());
+    log::info!("✅ تم العثور على {} لعبة", games.len());
     games
 }
 
-/// استخراج libandengine.so من ملف APK
 pub fn extract_from_apk(apk_path: &Path) -> Option<Vec<u8>> {
     let apk_file = std::fs::File::open(apk_path).ok()?;
     let mut archive = zip::ZipArchive::new(apk_file).ok()?;
@@ -95,12 +93,10 @@ pub fn extract_from_apk(apk_path: &Path) -> Option<Vec<u8>> {
     None
 }
 
-/// تحميل اللعبة من ملف .so مباشرة
 pub fn load_so_file(so_path: &Path) -> Option<Vec<u8>> {
     std::fs::read(so_path).ok().filter(|d| !d.is_empty())
 }
 
-/// تحميل اللعبة - تجربة المسار أولاً، ثم الاستخراج من APK
 pub fn load_game(path: &Path) -> Option<Vec<u8>> {
     if let Some(ext) = path.extension() {
         let ext = ext.to_string_lossy().to_lowercase();
