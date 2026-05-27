@@ -12,10 +12,38 @@ use std::cell::Cell;
 #[link(name = "GLESv2")]
 extern "C" {}
 
-// 🎯 تغليف المؤشر الخام لجعله Send + Sync
 pub struct EmuHandle(*mut std::ffi::c_void);
 unsafe impl Send for EmuHandle {}
 unsafe impl Sync for EmuHandle {}
+
+#[cfg(target_os = "android")]
+fn find_and_load_game(emu: &EmuHandle) -> bool {
+    // search in multiple locations
+    let paths = [
+        // assets (Android)
+        "/assets/libandengine.so",
+        // internal storage
+        "/storage/emulated/0/Download/libandengine.so",
+        // termux home
+        "/data/data/com.termux/files/home/flappy_extracted/lib/armeabi-v7a/libandengine.so",
+        // relative
+        "libandengine.so",
+    ];
+
+    for path in &paths {
+        if let Ok(data) = std::fs::read(path) {
+            log::info!("Found game at: {}", path);
+            use thumb_arm::{emu_load_elf, emu_init_android};
+            let entry = emu_load_elf(emu.0, data.as_ptr(), data.len() as u32);
+            if entry > 0 {
+                log::info!("ELF entry: 0x{:08X}", entry);
+                emu_init_android(emu.0);
+                return true;
+            }
+        }
+    }
+    false
+}
 
 #[cfg(target_os = "android")]
 fn load_game_from_assets(app: &AndroidApp, emu: &EmuHandle) -> bool {
@@ -27,7 +55,7 @@ fn load_game_from_assets(app: &AndroidApp, emu: &EmuHandle) -> bool {
             use std::io::Read;
             let mut elf_data = Vec::new();
             if asset.read_to_end(&mut elf_data).is_ok() && !elf_data.is_empty() {
-                log::info!("Loaded libandengine.so ({} bytes)", elf_data.len());
+                log::info!("Loaded libandengine.so ({} bytes) from assets", elf_data.len());
                 use thumb_arm::{emu_load_elf, emu_init_android};
                 let entry = emu_load_elf(emu.0, elf_data.as_ptr(), elf_data.len() as u32);
                 if entry > 0 {
@@ -38,7 +66,10 @@ fn load_game_from_assets(app: &AndroidApp, emu: &EmuHandle) -> bool {
             }
             false
         }
-        None => false,
+        None => {
+            // fallback to filesystem search
+            find_and_load_game(emu)
+        }
     }
 }
 
@@ -52,24 +83,20 @@ fn android_main(app: AndroidApp) {
     );
     log::info!("=== Verso UI + Flappy Bird ===");
 
-    // ── 1. إنشاء المحاكي ──
     use thumb_arm::emu_create;
     let emu = EmuHandle(emu_create());
     log::info!("Emulator created");
 
-    // ── 2. تحميل اللعبة ──
     let game_loaded = load_game_from_assets(&app, &emu);
     if game_loaded {
         log::info!("Flappy Bird loaded successfully!");
     } else {
-        log::warn!("Flappy Bird not found in assets (app will run without game)");
+        log::warn!("Flappy Bird not found");
     }
 
-    // ── 3. تغليف المحاكي للخيوط ──
     let emu = Arc::new(Mutex::new(emu));
     let emu_clone = emu.clone();
     
-    // ── 4. تشغيل المحاكي في خيط منفصل ──
     if game_loaded {
         std::thread::spawn(move || {
             loop {
@@ -81,7 +108,6 @@ fn android_main(app: AndroidApp) {
         log::info!("Emulator thread started");
     }
 
-    // ── 5. انتظار النافذة الأصلية ──
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -94,7 +120,6 @@ fn android_main(app: AndroidApp) {
         }
     };
 
-    // ── 6. تهيئة EGL و OpenGL ES ──
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -129,12 +154,12 @@ fn android_main(app: AndroidApp) {
     let screen_width = native_window.width() as f32;
     let screen_height = native_window.height() as f32;
 
-    // ── 7. تهيئة Dear ImGui ──
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
 
-    let scale_factor = (screen_width / 1000.0).max(1.0);
+    // scale factor for tablet/phone
+    let scale_factor = 2.0;
     imgui.io_mut().font_global_scale = scale_factor;
     imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData { config: Some(imgui::FontConfig {
         size_pixels: 24.0 * scale_factor,
@@ -150,14 +175,12 @@ fn android_main(app: AndroidApp) {
     let mut mouse_pos: [f32; 2] = [0.0; 2];
     let mut mouse_down = false;
 
-    // ── 8. الحلقة الرئيسية ──
     loop {
         let now = std::time::Instant::now();
         let delta = now - last_time;
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // جمع أحداث اللمس
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
 
@@ -179,13 +202,11 @@ fn android_main(app: AndroidApp) {
             }
         });
 
-        // تحديث ImGui IO
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
         io.add_mouse_pos_event(mouse_pos);
         io.mouse_down[0] = mouse_down;
 
-        // قراءة حالة المحاكي
         let pc = if game_loaded {
             let emu = emu.lock().unwrap();
             use thumb_arm::emu_get_pc;
@@ -194,7 +215,6 @@ fn android_main(app: AndroidApp) {
             0
         };
 
-        // بناء واجهة ImGui
         let ui = imgui.new_frame();
         ui.window("🎮 VERSO-UI")
             .size([700.0 * scale_factor, 500.0 * scale_factor], imgui::Condition::FirstUseEver)
@@ -228,7 +248,6 @@ fn android_main(app: AndroidApp) {
                 ui.text("Status: Running...");
             });
 
-        // رسم
         unsafe {
             gl.clear_color(0.1, 0.1, 0.1, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
