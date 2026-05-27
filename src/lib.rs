@@ -1,5 +1,3 @@
-mod audio;
-
 use std::rc::Rc;
 
 #[cfg(target_os = "android")]
@@ -21,18 +19,9 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== VERSO-UI + quad-snd ===");
+    log::info!("=== VERSO-UI (Stable Base) ===");
 
-    // 1. تهيئة الصوت
-    let audio_player = audio::AudioPlayer::new() {
-        }
-        None => {
-            log::error!("❌ فشل تهيئة الصوت: {}", e);
-            None
-        }
-    };
-
-    // 2. انتظار النافذة وتهيئة EGL ...
+    // --- انتظار النافذة الأصلية ---
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -46,6 +35,7 @@ fn android_main(app: AndroidApp) {
     };
     log::info!("Window acquired");
 
+    // --- تهيئة EGL و OpenGL ---
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -80,6 +70,7 @@ fn android_main(app: AndroidApp) {
     let screen_width = native_window.width() as f32;
     let screen_height = native_window.height() as f32;
 
+    // --- تهيئة ImGui ---
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
@@ -100,13 +91,14 @@ fn android_main(app: AndroidApp) {
     let mut mouse_pos: [f32; 2] = [0.0; 2];
     let mut mouse_down = false;
 
+    // --- الحلقة الرئيسية ---
     loop {
         let now = std::time::Instant::now();
         let delta = now - last_time;
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // جمع أحداث اللمس
+        // معالجة اللمس
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
         app.input_events(|event| {
@@ -137,28 +129,18 @@ fn android_main(app: AndroidApp) {
             .size([700.0 * scale_factor, 500.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.text("Audio: ✅ quad-snd ready");
-                if ui.button("🔊 Test Sound") {
-                    if let Some(ref a) = audio_player {
-                        // تشغيل أول ملف صوتي نجده
-                        if let Ok(entries) = std::fs::read_dir("assets/sounds") {
-                            for entry in entries.flatten() {
-                                let path = entry.path();
-                                if path.extension().map_or(false, |e| e == "ogg") {
-                                    let _ = a.play_file(&path);
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                ui.text("Status: Stable base ready.");
+                ui.separator();
+                if ui.button("📂 Load Game (SAF)") {
+                    log::info!("Load Game button clicked");
                 }
             });
 
+        // رسم
         unsafe {
             gl.clear_color(0.1, 0.1, 0.1, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
         }
-
         let draw_data = imgui.render();
         renderer.render(&gl, &mut texture_map, draw_data).expect("ImGui render");
 
