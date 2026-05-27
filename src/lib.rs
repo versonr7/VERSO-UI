@@ -16,10 +16,10 @@ extern "C" {}
 fn android_main(app: AndroidApp) {
     android_logger::init_once(
         android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Debug)
+            .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Verso UI (Touch Diagnostic) ===");
+    log::info!("=== Verso UI ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -32,7 +32,6 @@ fn android_main(app: AndroidApp) {
             }
         }
     };
-    log::info!("Window acquired");
 
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
@@ -95,7 +94,7 @@ fn android_main(app: AndroidApp) {
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // 🩺 جمع الأحداث مع تصحيح كثيف
+        // جمع الأحداث
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
 
@@ -103,69 +102,34 @@ fn android_main(app: AndroidApp) {
             match event {
                 InputEvent::MotionEvent(motion) => {
                     if let Some(pointer) = motion.pointers().next() {
-                        let new_pos = [pointer.x() as f32, pointer.y() as f32];
-                        let action = motion.action();
-                        let mut new_down = mouse_down;
-
-                        match action {
-                            MotionAction::Down | MotionAction::PointerDown => {
-                                new_down = true;
-                                log::debug!("🟢 DOWN at ({:.0}, {:.0})", new_pos[0], new_pos[1]);
-                            }
-                            MotionAction::Up | MotionAction::PointerUp => {
-                                new_down = false;
-                                log::debug!("🔴 UP at ({:.0}, {:.0})", new_pos[0], new_pos[1]);
-                            }
-                            MotionAction::Move | MotionAction::HoverMove => {
-                                log::debug!("🔵 MOVE to ({:.0}, {:.0})", new_pos[0], new_pos[1]);
-                            }
+                        mouse_pos = [pointer.x() as f32, pointer.y() as f32];
+                        match motion.action() {
+                            MotionAction::Down | MotionAction::PointerDown => mouse_down = true,
+                            MotionAction::Up | MotionAction::PointerUp => mouse_down = false,
                             _ => {}
                         }
-
-                        // تحديث المتغيرات العالمية
-                        mouse_pos = new_pos;
-                        mouse_down = new_down;
                     }
                     InputStatus::Handled
                 }
-                InputEvent::KeyEvent(_) => {
-                    log::debug!("⌨️ KeyEvent received");
-                    InputStatus::Handled
-                }
+                InputEvent::KeyEvent(_) => InputStatus::Handled,
                 _ => InputStatus::Unhandled,
             }
         });
 
-        // 🩺 تحديث ImGui IO مع تصحيح
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
-
         io.add_mouse_pos_event(mouse_pos);
-        log::debug!("  ➜ add_mouse_pos_event({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]);
-
-        // استدعاء add_mouse_button_event فقط عند تغير الحالة
-        static mut LAST_DOWN: bool = false;
-        if mouse_down != unsafe { LAST_DOWN } {
-            io.add_mouse_button_event(imgui::MouseButton::Left, mouse_down);
-            log::debug!("  ➜ add_mouse_button_event(Left, {})", mouse_down);
-            unsafe { LAST_DOWN = mouse_down; }
-        }
-
         io.mouse_down[0] = mouse_down;
-        log::debug!("  ➜ io.mouse_down[0] = {}", mouse_down);
 
-        // 🩺 بداية إطار ImGui
         let ui = imgui.new_frame();
-
         ui.window("VERSO-UI")
-            .size([900.0 * scale_factor, 600.0 * scale_factor], imgui::Condition::FirstUseEver)
+            .size([600.0 * scale_factor, 400.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.text(format!("Mouse: ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]));
-
-                // 🩺 اختبار الزر
+                ui.text(format!("Scale: {:.1}x", scale_factor));
+                ui.separator();
                 if ui.button("Click me") {
-                    log::info!("🎉🎉🎉 Button clicked! 🎉🎉🎉");
+                    log::info!("Button clicked!");
                 }
             });
 
