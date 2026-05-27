@@ -1,5 +1,3 @@
-mod ui;
-
 use std::rc::Rc;
 
 #[cfg(target_os = "android")]
@@ -21,7 +19,7 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("VersoUI"),
     );
-    log::info!("=== Verso UI (Final Fix) ===");
+    log::info!("=== Verso UI (AddMouseButtonEvent fix) ===");
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -67,27 +65,17 @@ fn android_main(app: AndroidApp) {
         })
     });
 
-    // تهيئة Dear ImGui
-    let mut imgui = imgui::Context::create();
-    imgui.set_ini_filename(None);
-
     let screen_width = native_window.width() as f32;
     let screen_height = native_window.height() as f32;
+
+    let mut imgui = imgui::Context::create();
+    imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
 
     let mut texture_map: imgui_glow_renderer::SimpleTextureMap = Default::default();
     let mut renderer = imgui_glow_renderer::Renderer::initialize(
-        &gl,
-        &mut imgui,
-        &mut texture_map,
-        false,
+        &gl, &mut imgui, &mut texture_map, false,
     ).expect("ImGui renderer init");
-
-    // متغيرات لتخزين حالة اللمس
-    let mut mouse_pos = [0.0f32, 0.0f32];
-    let mut mouse_down = false;
-    // 🎯 طابور لتأخير حدث UP إطارًا واحدًا (حل مشكلة النقر)
-    let mut pending_up = false;
 
     let mut last_time = std::time::Instant::now();
 
@@ -97,7 +85,7 @@ fn android_main(app: AndroidApp) {
         last_time = now;
         let delta_s = delta.as_secs_f64();
 
-        // ✅ الخطوة 1: جمع أحداث اللمس ولوحة المفاتيح
+        // 🎯 معالجة اللمس باستخدام AddMouseButtonEvent (الطريقة الصحيحة)
         use android_activity::input::{InputEvent, MotionAction};
         use android_activity::InputStatus;
 
@@ -105,56 +93,45 @@ fn android_main(app: AndroidApp) {
             match event {
                 InputEvent::MotionEvent(motion) => {
                     if let Some(pointer) = motion.pointers().next() {
-                        mouse_pos = [pointer.x() as f32, pointer.y() as f32];
+                        let x = pointer.x() as f32;
+                        let y = pointer.y() as f32;
+
                         match motion.action() {
                             MotionAction::Down | MotionAction::PointerDown => {
-                                mouse_down = true;
-                                pending_up = false; // إلغاء أي تأخير سابق
-                                log::debug!("Touch DOWN at ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]);
+                                imgui.io_mut().add_mouse_pos_event(x, y);
+                                imgui.io_mut().add_mouse_button_event(imgui::MouseButton::Left, true);
                             }
                             MotionAction::Up | MotionAction::PointerUp => {
-                                // 🎯 تأخير حدث UP للإطار التالي (حل مشكلة النقر)
-                                pending_up = true;
-                                log::debug!("Touch UP at ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]);
+                                imgui.io_mut().add_mouse_pos_event(x, y);
+                                imgui.io_mut().add_mouse_button_event(imgui::MouseButton::Left, false);
+                            }
+                            MotionAction::Move | MotionAction::HoverMove => {
+                                imgui.io_mut().add_mouse_pos_event(x, y);
                             }
                             _ => {}
                         }
                     }
                     InputStatus::Handled
                 }
-                // ✅ إصلاح تقسيم الشاشة: معالجة KeyEvent
-                InputEvent::KeyEvent(_) => {
-                    InputStatus::Handled
-                }
+                InputEvent::KeyEvent(_) => InputStatus::Handled, // منع ANR عند تقسيم الشاشة
                 _ => InputStatus::Unhandled,
             }
         });
 
-        // ✅ الخطوة 2: تطبيق التأخير - رفع mouse_down بعد أن يعالج ImGui الإطار
-        if pending_up {
-            mouse_down = false;
-            pending_up = false;
-        }
-
-        // ✅ الخطوة 3: تحديث ImGui IO
         let io = imgui.io_mut();
         io.update_delta_time(std::time::Duration::from_secs_f64(delta_s));
-        io.mouse_pos = mouse_pos;
-        io.mouse_down[0] = mouse_down;
 
-        // ✅ الخطوة 4: بناء واجهة المستخدم
         let ui = imgui.new_frame();
         ui.window("VERSO-UI")
             .size([400.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.text(format!("Touch: ({:.0}, {:.0})", mouse_pos[0], mouse_pos[1]));
+                ui.text(format!("Mouse: ({:.0}, {:.0})", io.mouse_pos[0], io.mouse_pos[1]));
                 if ui.button("Click me") {
                     log::info!("✅ Button clicked!");
                 }
             });
 
-        // ✅ الخطوة 5: رسم كل شيء
         unsafe {
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
