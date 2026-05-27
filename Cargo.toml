@@ -26,14 +26,12 @@ target_sdk_version = 30
 min_sdk_version = 21
 features = ["native-activity"]
 resources = "res"
-java_source = "src/java"
-permissions = ["android.permission.READ_EXTERNAL_STORAGE"]
 
 [package.metadata.android.application]
 label = "Verso UI"
 
 [[package.metadata.android.application.activity]]
-name = "com.verso.ui.VersoActivity"
+name = "android.app.NativeActivity"
 exported = true
 meta_data = [
     { name = "android.app.lib_name", value = "verso_ui" }
