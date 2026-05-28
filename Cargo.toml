@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ndk-context = "0.1"
 bytemuck = "1"
 thumb-arm = { git = "https://github.com/versonr7/Thumb-ARM", package = "thumb-arm" }
 android-activity = { version = "0.4.3", features = ["native-activity"] }
@@ -14,7 +13,6 @@ log = "0.4"
 android_logger = "0.13"
 imgui = "0.11"
 imgui-glow-renderer = "0.11"
-jni = "0.21"
 zip = "0.6"
 
 [lib]
@@ -26,13 +24,12 @@ target_sdk_version = 30
 min_sdk_version = 21
 features = ["native-activity"]
 resources = "res"
-java_source = "src/java"
 
 [package.metadata.android.application]
 label = "Verso UI"
 
 [[package.metadata.android.application.activity]]
-name = "com.verso.ui.VersoActivity"
+name = "android.app.NativeActivity"
 exported = true
 meta_data = [
     { name = "android.app.lib_name", value = "verso_ui" }
