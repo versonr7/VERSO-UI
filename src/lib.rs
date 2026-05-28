@@ -25,14 +25,11 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== VERSO-UI + Arabic Font ===");
+    log::info!("=== VERSO-UI + SAF ===");
 
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
-    let mut games: Vec<saf::FoundGame> = Vec::new();
-    let mut selected: Option<usize> = None;
 
-    // انتظار النافذة
     let window_ready = Cell::new(false);
     let native_window = loop {
         app.poll_events(Some(std::time::Duration::from_millis(16)), |_event| {
@@ -45,7 +42,6 @@ fn android_main(app: AndroidApp) {
         }
     };
 
-    // تهيئة EGL
     use khronos_egl as egl;
     let egl = egl::Instance::new(egl::Static);
     let display = unsafe { egl.get_display(egl::DEFAULT_DISPLAY) }.expect("get_display");
@@ -80,48 +76,16 @@ fn android_main(app: AndroidApp) {
     let screen_width = native_window.width() as f32;
     let screen_height = native_window.height() as f32;
 
-    // ── تهيئة ImGui مع الخط العربي ──
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
     imgui.io_mut().display_size = [screen_width, screen_height];
 
     let scale_factor = 2.0;
-
-    // ✍️ إضافة الخط العربي مع نطاق الأحرف العربية
-    if let Ok(arabic_font_data) = std::fs::read("assets/arabic.ttf") {
-        // نطاق الأحرف العربية: Arabic (0600-06FF) + Arabic Supplement (0750-077F) + Arabic Presentation Forms-A (FB50-FDFF) + Arabic Presentation Forms-B (FE70-FEFF)
-        static ARABIC_RANGES: &[u32] = &[
-            0x0020, 0x00FF, // Basic Latin + Latin Supplement (للأرقام والرموز)
-            0x0600, 0x06FF, // Arabic
-            0x0750, 0x077F, // Arabic Supplement
-            0xFB50, 0xFDFF, // Arabic Presentation Forms-A
-            0xFE70, 0xFEFF, // Arabic Presentation Forms-B
-            0,
-        ];
-        let arabic_glyph_ranges = unsafe {
-            imgui::FontGlyphRanges::from_slice_unchecked(ARABIC_RANGES)
-        };
-
-        imgui.fonts().add_font(&[imgui::FontSource::TtfData {
-            data: &arabic_font_data,
-            size_pixels: 24.0 * scale_factor,
-            config: Some(imgui::FontConfig {
-                glyph_ranges: arabic_glyph_ranges,
-                ..Default::default()
-            }),
-        }]);
-        log::info!("✅ Arabic font loaded");
-    } else {
-        log::warn!("⚠️ Arabic font not found at assets/arabic.ttf, using default font");
-        imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData {
-            config: Some(imgui::FontConfig {
-                size_pixels: 24.0 * scale_factor,
-                ..Default::default()
-            }),
-        }]);
-    }
-
     imgui.io_mut().font_global_scale = scale_factor;
+    imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData { config: Some(imgui::FontConfig {
+        size_pixels: 24.0 * scale_factor,
+        ..Default::default()
+    })}]);
 
     let mut texture_map: imgui_glow_renderer::SimpleTextureMap = Default::default();
     let mut renderer = imgui_glow_renderer::Renderer::initialize(
@@ -163,73 +127,56 @@ fn android_main(app: AndroidApp) {
         io.add_mouse_pos_event(mouse_pos);
         io.mouse_down[0] = mouse_down;
 
-        if saf::is_scan_done() {
-            games = saf::take_games();
-            selected = None;
-            log::info!("Scan complete, found {} games", games.len());
-        }
-
-        let ui = imgui.new_frame();
-        ui.window("🎮 VERSO-UI")
-            .size([700.0 * scale_factor, 600.0 * scale_factor], imgui::Condition::FirstUseEver)
-            .build(|| {
-                ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
-                ui.separator();
-
-                if game_loaded {
-                    ui.text("✅ Game loaded!");
-                    if let Some(ref emu) = emu {
-                        use thumb_arm::emu_get_pc;
-                        let pc = emu_get_pc(emu.0);
-                        ui.text(format!("PC: 0x{:08X}", pc));
-                    }
-                } else {
-                    ui.text("❌ No game loaded");
-                }
-                ui.separator();
-
-                if ui.button("🔍 فحص الألعاب") {
-                    saf::start_scan();
-                }
-                if saf::is_scanning() {
-                    ui.text("جاري الفحص...");
-                }
-
-                let scan_log = saf::get_scan_log();
-                if !scan_log.is_empty() {
-                    ui.separator();
-                    ui.text("سجل الفحص:");
-                    for line in scan_log.iter().rev().take(10) {
-                        ui.text(line);
-                    }
-                }
-
-                if !games.is_empty() {
-                    ui.separator();
-                    ui.text(format!("تم العثور على {} لعبة:", games.len()));
-                    for (i, g) in games.iter().enumerate() {
-                        let label = format!("{} ({})", g.name, g.source);
-                        if ui.selectable_config(&label).build() {
-                            selected = Some(i);
-                        }
-                    }
-                    if let Some(idx) = selected {
-                        ui.separator();
-                        if ui.button("▶️ تشغيل") {
-                            let path = games[idx].path.clone();
-                            if let Some(data) = saf::load_game(&path) {
-                                use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
-                                let h = EmuHandle(emu_create());
-                                let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
-                                if entry > 0 {
-                                    log::info!("Game loaded! Entry: 0x{:08X}", entry);
-                                    emu_init_android(h.0);
-                                    emu = Some(h);
-                                    game_loaded = true;
+        // التحقق من نتيجة SAF
+        if let Some(data) = saf::check_saf_result() {
+            if !data.is_empty() {
+                // محاولة استخراج libandengine.so إذا كان APK
+                let elf_data = if let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(&data)) {
+                    let mut found = None;
+                    for i in 0..archive.len() {
+                        if let Ok(mut file) = archive.by_index(i) {
+                            if file.name().contains("libandengine.so") {
+                                let mut buf = Vec::new();
+                                if file.read_to_end(&mut buf).is_ok() {
+                                    found = Some(buf);
+                                    break;
                                 }
                             }
                         }
                     }
+                    found.unwrap_or(data)
+                } else {
+                    data
+                };
+
+                use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
+                let h = EmuHandle(emu_create());
+                let entry = emu_load_elf(h.0, elf_data.as_ptr(), elf_data.len() as u32);
+                if entry > 0 {
+                    log::info!("Game loaded via SAF! Entry: 0x{:08X}", entry);
+                    emu_init_android(h.0);
+                    emu = Some(h);
+                    game_loaded = true;
+                }
+            }
+        }
+
+        let ui = imgui.new_frame();
+        ui.window("🎮 VERSO-UI")
+            .size([400.0 * scale_factor, 300.0 * scale_factor], imgui::Condition::FirstUseEver)
+            .build(|| {
+                ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
+                if game_loaded {
+                    ui.text("✅ Game loaded!");
+                    if let Some(ref emu) = emu {
+                        use thumb_arm::emu_get_pc;
+                        ui.text(format!("PC: 0x{:08X}", emu_get_pc(emu.0)));
+                    }
+                } else {
+                    ui.text("Press 'Load Game' to pick a file");
+                }
+                if ui.button("📂 Load Game (SAF)") {
+                    saf::open_saf_picker(&app);
                 }
             });
 
