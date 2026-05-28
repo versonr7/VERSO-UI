@@ -1,7 +1,6 @@
 mod saf;
 
 use std::rc::Rc;
-use std::io::Read;
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -26,10 +25,12 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("VersoUI"),
     );
-    log::info!("=== VERSO-UI + SAF ===");
+    log::info!("=== VERSO-UI + Manual Scan ===");
 
     let mut game_loaded = false;
     let mut emu: Option<EmuHandle> = None;
+    let mut games: Vec<saf::FoundGame> = Vec::new();
+    let mut selected: Option<usize> = None;
 
     let window_ready = Cell::new(false);
     let native_window = loop {
@@ -128,56 +129,73 @@ fn android_main(app: AndroidApp) {
         io.add_mouse_pos_event(mouse_pos);
         io.mouse_down[0] = mouse_down;
 
-        // التحقق من نتيجة SAF
-        if let Some(data) = saf::check_saf_result() {
-            if !data.is_empty() {
-                // محاولة استخراج libandengine.so إذا كان APK
-                let elf_data = if let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(&data)) {
-                    let mut found = None;
-                    for i in 0..archive.len() {
-                        if let Ok(mut file) = archive.by_index(i) {
-                            if file.name().contains("libandengine.so") {
-                                let mut buf = Vec::new();
-                                if file.read_to_end(&mut buf).is_ok() {
-                                    found = Some(buf);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    found.unwrap_or(data)
-                } else {
-                    data
-                };
-
-                use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
-                let h = EmuHandle(emu_create());
-                let entry = emu_load_elf(h.0, elf_data.as_ptr(), elf_data.len() as u32);
-                if entry > 0 {
-                    log::info!("Game loaded via SAF! Entry: 0x{:08X}", entry);
-                    emu_init_android(h.0);
-                    emu = Some(h);
-                    game_loaded = true;
-                }
-            }
+        // التحقق من اكتمال الفحص
+        if saf::is_scan_done() {
+            games = saf::take_games();
+            selected = None;
         }
 
         let ui = imgui.new_frame();
         ui.window("🎮 VERSO-UI")
-            .size([400.0 * scale_factor, 300.0 * scale_factor], imgui::Condition::FirstUseEver)
+            .size([700.0 * scale_factor, 600.0 * scale_factor], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text(format!("FPS: {:.1}", 1.0 / delta_s));
+                ui.separator();
+
                 if game_loaded {
                     ui.text("✅ Game loaded!");
                     if let Some(ref emu) = emu {
                         use thumb_arm::emu_get_pc;
-                        ui.text(format!("PC: 0x{:08X}", emu_get_pc(emu.0)));
+                        let pc = emu_get_pc(emu.0);
+                        ui.text(format!("PC: 0x{:08X}", pc));
                     }
                 } else {
-                    ui.text("Press 'Load Game' to pick a file");
+                    ui.text("❌ No game loaded");
                 }
-                if ui.button("📂 Load Game (SAF)") {
-                    saf::open_saf_picker(&app);
+                ui.separator();
+
+                if ui.button("🔍 Scan for Games") {
+                    saf::start_scan();
+                }
+                if saf::is_scanning() {
+                    ui.text("Scanning...");
+                }
+
+                let scan_log = saf::get_scan_log();
+                if !scan_log.is_empty() {
+                    ui.separator();
+                    ui.text("Scan log:");
+                    for line in scan_log.iter().rev().take(10) {
+                        ui.text(line);
+                    }
+                }
+
+                if !games.is_empty() {
+                    ui.separator();
+                    ui.text(format!("Found {} game(s):", games.len()));
+                    for (i, g) in games.iter().enumerate() {
+                        let label = format!("{} ({})", g.name, g.source);
+                        if ui.selectable_config(&label).build() {
+                            selected = Some(i);
+                        }
+                    }
+                    if let Some(idx) = selected {
+                        ui.separator();
+                        if ui.button("▶️ Load Selected") {
+                            let path = games[idx].path.clone();
+                            if let Some(data) = saf::load_game(&path) {
+                                use thumb_arm::{emu_create, emu_load_elf, emu_init_android};
+                                let h = EmuHandle(emu_create());
+                                let entry = emu_load_elf(h.0, data.as_ptr(), data.len() as u32);
+                                if entry > 0 {
+                                    log::info!("Game loaded! Entry: 0x{:08X}", entry);
+                                    emu_init_android(h.0);
+                                    emu = Some(h);
+                                    game_loaded = true;
+                                }
+                            }
+                        }
+                    }
                 }
             });
 
