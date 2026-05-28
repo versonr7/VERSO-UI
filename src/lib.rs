@@ -1,6 +1,7 @@
 mod saf;
 
 use std::rc::Rc;
+use std::io::Read;
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;

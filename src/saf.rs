@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 static PICKED_FILE_DATA: Mutex<Option<Vec<u8>>> = Mutex::new(None);
